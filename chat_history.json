@@ -1,0 +1,62 @@
+[
+  {
+    "timestamp": "2025-10-26 22:13:46",
+    "username": "SERVER",
+    "message": "nam đã tham gia chat!"
+  },
+  {
+    "timestamp": "2025-10-26 22:14:01",
+    "username": "SERVER",
+    "message": "thanhf đã tham gia chat!"
+  },
+  {
+    "timestamp": "2025-10-26 22:14:12",
+    "username": "nam",
+    "message": "hello"
+  },
+  {
+    "timestamp": "2025-10-26 22:14:16",
+    "username": "thanhf",
+    "message": "hi"
+  },
+  {
+    "timestamp": "2025-10-26 22:14:20",
+    "username": "nam",
+    "message": "chaof mn"
+  },
+  {
+    "timestamp": "2025-10-26 22:14:23",
+    "username": "thanhf",
+    "message": "tui nef"
+  },
+  {
+    "timestamp": "2025-10-26 22:15:16",
+    "username": "SERVER",
+    "message": "nam đã tham gia chat!"
+  },
+  {
+    "timestamp": "2025-10-26 22:15:24",
+    "username": "SERVER",
+    "message": "ngan đã tham gia chat!"
+  },
+  {
+    "timestamp": "2025-10-26 22:15:43",
+    "username": "nam",
+    "message": "alo ba"
+  },
+  {
+    "timestamp": "2025-10-26 22:15:51",
+    "username": "ngan",
+    "message": "hello"
+  },
+  {
+    "timestamp": "2025-10-26 22:15:54",
+    "username": "SERVER",
+    "message": "ngan đã rời khỏi chat!"
+  },
+  {
+    "timestamp": "2025-10-26 22:16:00",
+    "username": "SERVER",
+    "message": "nam đã rời khỏi chat!"
+  }
+]
