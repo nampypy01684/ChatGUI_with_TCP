@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Modern WebSocket Chat Test</title>
+    <style>
+      /* Thiết lập lại kiểu dáng cơ bản */
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        padding: 40px;
+        background: #e9ecef; /* Nền xám nhạt */
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        margin: 0;
+      }
+
+      /* Container chính cho ứng dụng chat */
+      .chat-container {
+        width: 100%;
+        max-width: 500px;
+        background: #ffffff; /* Nền trắng */
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        padding: 20px;
+      }
+
+      /* Tiêu đề */
+      h2 {
+        text-align: center;
+        color: #343a40;
+        margin-bottom: 20px;
+        font-weight: 600;
+      }
+
+      /* Khu vực log/hiển thị tin nhắn */
+      #log {
+        border: 1px solid #dee2e6;
+        height: 300px;
+        padding: 15px;
+        overflow-y: auto;
+        background: #f8f9fa; /* Nền log hơi xám */
+        border-radius: 8px;
+        margin-bottom: 15px;
+        display: flex;
+        flex-direction: column; /* Quan trọng để các tin nhắn xếp chồng lên nhau */
+      }
+
+      /* Định dạng từng tin nhắn trong log */
+      #log > div {
+        padding: 5px 10px;
+        margin-bottom: 5px;
+        border-radius: 5px;
+        line-height: 1.4;
+        word-wrap: break-word; /* Đảm bảo tin nhắn dài không tràn ra ngoài */
+      }
+
+      /* Kiểu dáng cho tin nhắn trạng thái */
+      #log > div[style*="black"] {
+        background-color: #e9ecef;
+        color: #495057 !important;
+        font-size: 0.9em;
+        text-align: center;
+      }
+
+      /* Kiểu dáng cho tin nhắn gửi đi (Sent) */
+      #log > div[style*="green"] {
+        background-color: #d4edda;
+        color: #155724 !important;
+        align-self: flex-end; /* Căn phải */
+      }
+
+      /* Kiểu dáng cho tin nhắn nhận được (Received) */
+      #log > div[style*="blue"] {
+        background-color: #cce5ff;
+        color: #004085 !important;
+        align-self: flex-start; /* Căn trái */
+      }
+
+      /* Khu vực nhập và gửi tin nhắn */
+      .input-group {
+        display: flex;
+        gap: 10px; /* Khoảng cách giữa input và button */
+      }
+
+      /* Thanh nhập liệu */
+      #msg {
+        flex-grow: 1;
+        padding: 10px 15px;
+        border: 1px solid #ced4da;
+        border-radius: 6px;
+        font-size: 16px;
+      }
+
+      /* Nút gửi */
+      #send {
+        padding: 10px 20px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: background 0.3s ease;
+      }
+
+      #send:hover {
+        background: #0056b3;
+      }
+
+      #send:active {
+        background: #003f7f;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="chat-container">
+      <h2>💬 WebSocket Chat Tester</h2>
+      <div id="log"></div>
+      <div class="input-group">
+        <input id="msg" placeholder="Nhập tin nhắn..." autocomplete="off" />
+        <button id="send">Gửi</button>
+      </div>
+    </div>
+
+    <script>
+      // *** LOGIC GỐC ĐƯỢC GIỮ NGUYÊN ***
+
+      const ws = new WebSocket("ws://localhost:8080/ws/chat");
+      const log = document.getElementById("log");
+      const msg = document.getElementById("msg");
+      const sendBtn = document.getElementById("send");
+
+      function append(message, type = "info") {
+        const div = document.createElement("div");
+
+        // Cập nhật nội dung hiển thị cho dễ đọc hơn
+        let displayMessage = message;
+        if (type === "sent") {
+          displayMessage = "Bạn: " + message.replace("📤 Sent: ", "");
+        } else if (type === "recv") {
+          displayMessage = "Server: " + message.replace("📩 Received: ", "");
+        }
+
+        div.textContent = displayMessage;
+
+        // Logic màu sắc gốc được giữ nguyên để CSS selectors hoạt động
+        div.style.color =
+          type === "sent" ? "green" : type === "recv" ? "blue" : "black";
+
+        log.appendChild(div);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      ws.onopen = () => append("✅ Connected to WebSocket!");
+      ws.onclose = () => append("❌ Disconnected");
+      ws.onerror = (err) => append("⚠️ Error: " + err.message);
+
+      // Thêm xử lý để chỉ hiển thị dữ liệu nhận được trong e.data
+      ws.onmessage = (e) => append(e.data, "recv");
+
+      sendBtn.onclick = () => {
+        const text = msg.value.trim();
+        if (text) {
+          ws.send(text);
+          // Chỉ truyền text, hàm append sẽ thêm "Bạn: "
+          append(text, "sent");
+          msg.value = "";
+          msg.focus(); // Tập trung lại vào ô nhập liệu
+        }
+      };
+
+      // Cho phép gửi tin nhắn bằng phím Enter
+      msg.addEventListener("keypress", function (e) {
+        if (e.key === "Enter") {
+          sendBtn.click();
+        }
+      });
+    </script>
+  </body>
+</html>
