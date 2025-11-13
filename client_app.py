@@ -1,225 +1,111 @@
 import socket
 import threading
 import json
-import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox, simpledialog
+import base64
 from datetime import datetime
+from io import BytesIO
 
+import tkinter as tk
+from tkinter import ttk, scrolledtext, messagebox, simpledialog, filedialog
+
+try:
+    from PIL import Image, ImageTk
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
+from login_ui import LoginDialog
+
+
+# ======================= LỚP CHATCLIENT (KẾT NỐI TCP) =======================
 
 class ChatClient:
-    def __init__(self):
-        self.host = '127.0.0.1'
-        self.port = 5555
+    """
+    Chịu trách nhiệm kết nối server, gửi/nhận gói JSON (NDJSON).
+    Không dính Tkinter để dễ tách code.
+    """
+
+    def __init__(self, host='127.0.0.1', port=5555):
+        self.host = host
+        self.port = port
         self.client_socket = None
         self.username = None
         self.connected = False
         self.receive_thread = None
 
-        # callbacks cho GUI
+        # callback để GUI gán vào
+        self.message_callback = None    # log text
         self.user_list_callback = None
         self.room_list_callback = None
         self.room_joined_callback = None
+        self.image_callback = None      # nhận ảnh
 
-    def connect(self, username, callback):
+        self.current_avatar = None
+
+    # ------------- HÀM TIỆN ÍCH -------------
+    def send_packet(self, data: dict) -> bool:
+        if not self.connected or not self.client_socket:
+            return False
+        try:
+            payload = json.dumps(data) + "\n"
+            self.client_socket.sendall(payload.encode('utf-8'))
+            return True
+        except Exception as e:
+            print("Lỗi send_packet:", e)
+            return False
+
+    # ------------- KẾT NỐI / NGẮT KẾT NỐI -------------
+    def connect(self, username, password, action, callback) -> bool:
+        """
+        action: 'login' hoặc 'register'
+        callback: hàm GUI dùng để log message hệ thống.
+        """
         try:
             self.username = username
             self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.client_socket.connect((self.host, self.port))
 
-            # gửi username plain text
-            self.client_socket.send(username.encode('utf-8'))
+            # Gửi gói auth đầu tiên
+            auth_packet = {
+                "type": "auth",
+                "action": action,
+                "username": username,
+                "password": password
+            }
+            payload = json.dumps(auth_packet) + "\n"
+            self.client_socket.sendall(payload.encode('utf-8'))
+
+            # Chờ phản hồi auth
+            resp = self.client_socket.recv(4096).decode('utf-8').strip()
+            data = json.loads(resp)
+
+            if data.get("type") == "error":
+                callback(f"[LỖI] {data.get('message')}\n", "error")
+                self.client_socket.close()
+                self.client_socket = None
+                return False
+
+            if data.get("type") != "auth_ok":
+                callback("[LỖI] Phản hồi đăng nhập không hợp lệ từ server.\n", "error")
+                self.client_socket.close()
+                self.client_socket = None
+                return False
+
+            self.current_avatar = data.get("avatar")
             self.connected = True
 
+            # Bắt đầu thread nhận tin
             self.receive_thread = threading.Thread(
-                target=self.receive_messages,
-                args=(callback,),
+                target=self.receive_loop,
                 daemon=True
             )
             self.receive_thread.start()
+
             return True
+
         except Exception as e:
-            callback(f"[LỖI] Không thể kết nối: {e}\n", "error")
+            callback(f"[LỖI] Không thể kết nối server: {e}\n", "error")
             return False
-
-    def receive_messages(self, callback):
-        """Nhận NDJSON: mỗi gói 1 dòng JSON"""
-        buffer = ""
-        while self.connected:
-            try:
-                chunk = self.client_socket.recv(4096).decode('utf-8')
-                if not chunk:
-                    break
-                buffer += chunk
-
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
-                    line = line.strip()
-                    if not line:
-                        continue
-
-                    try:
-                        message_data = json.loads(line)
-                    except json.JSONDecodeError as e:
-                        callback(f"[LỖI] JSON lỗi: {e}\n", "error")
-                        continue
-
-                    msg_type = message_data.get('type')
-
-                    if msg_type == 'history':
-                        room = message_data.get('room', 'Phòng chung')
-                        callback(f"[LỊCH SỬ] Đang tải lịch sử phòng '{room}'...\n", "system")
-                        for entry in message_data.get('data', []):
-                            ts_full = entry.get('timestamp', '')
-                            if ' ' in ts_full:
-                                timestamp = ts_full.split()[1]
-                            else:
-                                timestamp = ts_full
-                            username = entry.get('username', '???')
-                            msg = entry.get('message', '')
-                            line2 = f"[{timestamp}] {username}: {msg}\n"
-                            callback(line2, "history")
-                        callback("[LỊCH SỬ] Đã tải xong lịch sử\n\n", "system")
-
-                    elif msg_type == 'message':
-                        sender = message_data.get('sender', '???')
-                        message = message_data.get('message', '')
-                        timestamp = message_data.get(
-                            'timestamp',
-                            datetime.now().strftime("%H:%M:%S")
-                        )
-                        room = message_data.get('room', 'Phòng chung')
-
-                        if sender == "SERVER":
-                            line2 = f"[{timestamp}] 🔔 ({room}) {message}\n"
-                            callback(line2, "server")
-                        elif sender == self.username:
-                            line2 = f"[{timestamp}] ({room}) Bạn: {message}\n"
-                            callback(line2, "self")
-                        else:
-                            line2 = f"[{timestamp}] ({room}) {sender}: {message}\n"
-                            callback(line2, "other")
-
-                    elif msg_type == 'private':
-                        sender = message_data.get('sender', '???')
-                        recipient = message_data.get('recipient', '???')
-                        message = message_data.get('message', '')
-                        timestamp = message_data.get(
-                            'timestamp',
-                            datetime.now().strftime("%H:%M:%S")
-                        )
-                        if sender == self.username:
-                            line2 = f"[{timestamp}] (PM tới {recipient}) {message}\n"
-                            callback(line2, "self")
-                        elif recipient == self.username:
-                            line2 = f"[{timestamp}] (PM từ {sender}) {message}\n"
-                            callback(line2, "other")
-                        else:
-                            line2 = f"[{timestamp}] (PM {sender} -> {recipient}) {message}\n"
-                            callback(line2, "other")
-
-                    elif msg_type == 'user_list':
-                        if self.user_list_callback:
-                            users = message_data.get('users', [])
-                            self.user_list_callback(users)
-
-                    elif msg_type == 'room_list':
-                        if self.room_list_callback:
-                            rooms = message_data.get('rooms', [])
-                            self.room_list_callback(rooms)
-
-                    elif msg_type == 'room_joined':
-                        room = message_data.get('room')
-                        is_admin = message_data.get('is_admin', False)
-                        if self.room_joined_callback and room:
-                            self.room_joined_callback(room, is_admin)
-                        callback(f"[SYSTEM] Bạn đã vào phòng '{room}'\n", "system")
-
-                    elif msg_type == 'admin_kicked':
-                        room = message_data.get('room', '')
-                        msg = message_data.get('message', '')
-                        line2 = f"[SYSTEM] ({room}) {msg}\n"
-                        callback(line2, "system")
-
-                    elif msg_type == 'error':
-                        err_msg = message_data.get('message', 'Lỗi không xác định từ server.')
-                        callback(f"[LỖI] {err_msg}\n", "error")
-                        messagebox.showerror("Lỗi", err_msg)
-
-                    else:
-                        callback(f"[SYSTEM] Nhận gói tin không xác định: {message_data}\n",
-                                 "system")
-
-            except Exception as e:
-                if self.connected:
-                    callback(f"[LỖI] {e}\n", "error")
-                break
-
-        self.connected = False
-        callback("[DISCONNECT] Đã ngắt kết nối khỏi server\n", "error")
-
-    # ---- GỬI ----
-    def send_packet(self, data):
-        try:
-            if self.connected:
-                payload = json.dumps(data) + "\n"
-                self.client_socket.send(payload.encode('utf-8'))
-                return True
-        except Exception as e:
-            print(f"Lỗi gửi packet: {e}")
-        return False
-
-    def send_message(self, message):
-        if not message.strip():
-            return False
-        data = {'type': 'chat', 'message': message}
-        return self.send_packet(data)
-
-    def send_private_message(self, target, message):
-        if not message.strip():
-            return False
-        data = {'type': 'private', 'to': target, 'message': message}
-        return self.send_packet(data)
-
-    def create_room(self, name, is_private=False, password=""):
-        data = {
-            'type': 'create_room',
-            'room_name': name,
-            'is_private': bool(is_private),
-            'password': password or ""
-        }
-        return self.send_packet(data)
-
-    def join_room(self, name, password=""):
-        data = {
-            'type': 'join_room',
-            'room_name': name,
-            'password': password or ""
-        }
-        return self.send_packet(data)
-
-    def admin_kick(self, room, target):
-        data = {
-            'type': 'admin_kick',
-            'room': room,
-            'target': target
-        }
-        return self.send_packet(data)
-
-    def admin_change_password(self, room, new_password):
-        data = {
-            'type': 'admin_change_password',
-            'room': room,
-            'new_password': new_password
-        }
-        return self.send_packet(data)
-
-    def admin_rename_room(self, room, new_name):
-        data = {
-            'type': 'admin_rename_room',
-            'room': room,
-            'new_name': new_name
-        }
-        return self.send_packet(data)
 
     def disconnect(self):
         self.connected = False
@@ -228,691 +114,782 @@ class ChatClient:
                 self.client_socket.close()
             except Exception:
                 pass
+        self.client_socket = None
+
+    # ------------- NHẬN TIN -------------
+    def receive_loop(self):
+        buffer = ""
+        while self.connected:
+            try:
+                chunk = self.client_socket.recv(4096).decode('utf-8')
+                if not chunk:
+                    # server đóng
+                    if self.message_callback:
+                        self.message_callback("[SYSTEM] Mất kết nối tới server.\n",
+                                              "error")
+                    self.connected = False
+                    break
+                buffer += chunk
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    self.handle_packet(data)
+            except Exception as e:
+                print("receive_loop error:", e)
+                if self.connected and self.message_callback:
+                    self.message_callback("[SYSTEM] Lỗi kết nối tới server.\n",
+                                          "error")
+                self.connected = False
+                break
+
+    def handle_packet(self, data: dict):
+        msg_type = data.get("type")
+
+        # text log chung
+        def log(txt, tag="system"):
+            if self.message_callback:
+                self.message_callback(txt, tag)
+
+        if msg_type == "chat":
+            sender = data.get("sender", "???")
+            room = data.get("room", "Phòng chung")
+            message = data.get("message", "")
+            timestamp = data.get("timestamp") or datetime.now().strftime("%H:%M:%S")
+
+            if sender == "SERVER":
+                line = f"[{timestamp}] 🔔 ({room}) {message}\n"
+                log(line, "server")
+            elif sender == self.username:
+                line = f"[{timestamp}] ({room}) Bạn: {message}\n"
+                log(line, "self")
+            else:
+                line = f"[{timestamp}] ({room}) {sender}: {message}\n"
+                log(line, "other")
+
+        elif msg_type == "private":
+            sender = data.get("sender", "???")
+            recipient = data.get("recipient", "???")
+            message = data.get("message", "")
+            timestamp = data.get("timestamp") or datetime.now().strftime("%H:%M:%S")
+
+            if sender == self.username:
+                line = f"[{timestamp}] [PM tới {recipient}] {message}\n"
+                log(line, "self")
+            else:
+                line = f"[{timestamp}] [PM từ {sender}] {message}\n"
+                log(line, "pm")
+
+        elif msg_type == "user_list":
+            users = data.get("users", [])
+            if self.user_list_callback:
+                self.user_list_callback(users)
+
+        elif msg_type == "room_list":
+            rooms = data.get("rooms", [])
+            if self.room_list_callback:
+                self.room_list_callback(rooms)
+
+        elif msg_type == "room_joined":
+            room = data.get("room")
+            creator = data.get("creator")
+            is_admin = data.get("is_admin", False)
+            if self.room_joined_callback:
+                self.room_joined_callback(room, creator, is_admin)
+
+        elif msg_type == "error":
+            msg = data.get("message", "Lỗi không xác định.")
+            log(f"[LỖI] {msg}\n", "error")
+
+        elif msg_type == "history":
+            room = data.get("room", "Phòng chung")
+            entries = data.get("history", [])
+            log(f"===== Lịch sử phòng {room} =====\n", "system")
+            for e in entries:
+                ts = e.get("timestamp", "")
+                u = e.get("username", "")
+                m = e.get("message", "")
+                log(f"[{ts}] {u}: {m}\n", "history")
+            log("===== Hết lịch sử =====\n", "system")
+
+        elif msg_type == "avatar_updated":
+            msg = data.get("message", "Avatar đã cập nhật.")
+            log(f"[SYSTEM] {msg}\n", "system")
+
+        elif msg_type == "image":
+            # tin nhắn ảnh
+            if self.message_callback:
+                sender = data.get("sender", "???")
+                room = data.get("room", "Phòng chung")
+                filename = data.get("filename", "image")
+                caption = data.get("caption", "")
+                timestamp = data.get("timestamp") or datetime.now().strftime(
+                    "%H:%M:%S")
+
+                base_line = f"[{timestamp}] ({room}) "
+                if sender == self.username:
+                    base_line += f"Bạn gửi ảnh: {filename}"
+                    tag = "self"
+                else:
+                    base_line += f"{sender} gửi ảnh: {filename}"
+                    tag = "other"
+
+                if caption:
+                    base_line += f" - {caption}"
+                base_line += "\n"
+                self.message_callback(base_line, tag)
+
+            if self.image_callback:
+                self.image_callback(data)
+
+    # ------------- GỬI TIN NHẮN -------------
+    def send_chat(self, message: str, room: str = None):
+        data = {
+            "type": "chat",
+            "message": message
+        }
+        if room:
+            data["room"] = room
+        return self.send_packet(data)
+
+    def send_private(self, target: str, message: str):
+        data = {
+            "type": "private",
+            "to": target,
+            "message": message
+        }
+        return self.send_packet(data)
+
+    def request_history(self, room: str):
+        data = {
+            "type": "get_history",
+            "room": room
+        }
+        return self.send_packet(data)
+
+    # phòng + QTV giữ lại từ server cũ (nếu bạn muốn dùng)
+    def create_room(self, room_name: str, password: str = ""):
+        data = {
+            "type": "create_room",
+            "room": room_name,
+            "password": password
+        }
+        return self.send_packet(data)
+
+    def join_room(self, room_name: str, password: str = ""):
+        data = {
+            "type": "join_room",
+            "room": room_name,
+            "password": password
+        }
+        return self.send_packet(data)
+
+    def admin_kick(self, room: str, target: str):
+        data = {
+            "type": "admin_kick",
+            "room": room,
+            "target": target
+        }
+        return self.send_packet(data)
+
+    def admin_ban(self, room: str, target: str):
+        data = {
+            "type": "admin_ban",
+            "room": room,
+            "target": target
+        }
+        return self.send_packet(data)
+
+    def admin_unban(self, room: str, target: str):
+        data = {
+            "type": "admin_unban",
+            "room": room,
+            "target": target
+        }
+        return self.send_packet(data)
+
+    def admin_change_password(self, room: str, new_password: str):
+        data = {
+            "type": "admin_change_password",
+            "room": room,
+            "new_password": new_password
+        }
+        return self.send_packet(data)
+
+    # ------------- AVATAR + ẢNH -------------
+    def update_avatar(self, image_b64: str):
+        data = {
+            "type": "update_avatar",
+            "image_data": image_b64
+        }
+        return self.send_packet(data)
+
+    def send_image(self, image_b64: str, filename: str,
+                   caption: str = "", room: str = None):
+        data = {
+            "type": "image",
+            "image_data": image_b64,
+            "filename": filename,
+            "caption": caption
+        }
+        if room:
+            data["room"] = room
+        return self.send_packet(data)
 
 
-class LoginDialog:
-    def __init__(self, parent):
-        self.result = None
+# ======================= CỬA SỔ PM RIÊNG =======================
 
-        self.dialog = tk.Toplevel(parent)
-        self.dialog.title("🚀 Tham gia Chat")
-        self.dialog.geometry("400x300")
-        self.dialog.configure(bg='#1e1e1e')
-        self.dialog.resizable(False, False)
+class PrivateChatWindow:
+    def __init__(self, parent_gui, target_username):
+        self.parent_gui = parent_gui
+        self.target = target_username
 
-        self.dialog.transient(parent)
-        self.dialog.grab_set()
+        self.win = tk.Toplevel(parent_gui.root)
+        self.win.title(f"Chat với {target_username}")
 
-        self.setup_ui()
-        self.username_entry.focus()
+        self.win.geometry("450x500")
+        self.win.configure(bg="#f5f5f5")
 
-    def setup_ui(self):
-        header_frame = tk.Frame(self.dialog, bg='#0d7377', height=80)
-        header_frame.pack(fill='x')
-        header_frame.pack_propagate(False)
+        top = tk.Frame(self.win, bg="#6c5ce7", height=60)
+        top.pack(fill="x")
+        top.pack_propagate(False)
 
-        title = tk.Label(
-            header_frame,
-            text="💬 Chào mừng đến Chat!",
-            bg='#0d7377',
-            fg='white',
-            font=('Segoe UI', 18, 'bold')
+        lbl = tk.Label(
+            top,
+            text=f"💬 Đoạn chat với {target_username}",
+            bg="#6c5ce7",
+            fg="white",
+            font=("Segoe UI", 12, "bold")
         )
-        title.pack(expand=True)
+        lbl.pack(side="left", padx=10, pady=10)
 
-        content_frame = tk.Frame(self.dialog, bg='#1e1e1e')
-        content_frame.pack(expand=True, fill='both', padx=30, pady=20)
-
-        info_label = tk.Label(
-            content_frame,
-            text="Nhập tên hiển thị để tham gia:",
-            bg='#1e1e1e',
-            fg='white',
-            font=('Segoe UI', 11)
+        close_btn = tk.Button(
+            top,
+            text="✕",
+            command=self.on_close,
+            bg="#6c5ce7",
+            fg="white",
+            relief="flat",
+            font=("Segoe UI", 10, "bold"),
+            cursor="hand2"
         )
-        info_label.pack(pady=(0, 10))
+        close_btn.pack(side="right", padx=10, pady=10)
 
-        entry_frame = tk.Frame(content_frame, bg='#2d2d2d', relief='flat')
-        entry_frame.pack(fill='x', pady=(0, 10))
-
-        icon_label = tk.Label(
-            entry_frame,
-            text="👤",
-            bg='#2d2d2d',
-            font=('Segoe UI', 16)
+        self.text = scrolledtext.ScrolledText(
+            self.win,
+            wrap="word",
+            bg="white",
+            fg="#2d3436",
+            font=("Segoe UI", 10)
         )
-        icon_label.pack(side='left', padx=(10, 5))
+        self.text.pack(fill="both", expand=True, padx=10, pady=(5, 5))
+        self.text.config(state="disabled")
 
-        self.username_entry = tk.Entry(
-            entry_frame,
-            font=('Segoe UI', 12),
-            bg='#2d2d2d',
-            fg='white',
-            relief='flat',
-            insertbackground='white',
-            border=0
+        bottom = tk.Frame(self.win, bg="#f5f5f5")
+        bottom.pack(fill="x", padx=10, pady=(0, 10))
+
+        self.entry = tk.Entry(
+            bottom,
+            font=("Segoe UI", 10),
+            relief="solid",
+            bd=1
         )
-        self.username_entry.pack(side='left', fill='both', expand=True,
-                                 padx=(5, 10), pady=10)
-        self.username_entry.bind('<Return>', lambda e: self.submit())
+        self.entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        self.entry.bind("<Return>", lambda e: self.send())
 
-        btn_frame = tk.Frame(content_frame, bg='#1e1e1e')
-        btn_frame.pack(pady=20)
-
-        join_btn = tk.Button(
-            btn_frame,
-            text="🚀 Tham gia",
-            command=self.submit,
-            bg='#32de84',
-            fg='white',
-            font=('Segoe UI', 11, 'bold'),
-            cursor='hand2',
-            relief='flat',
-            padx=30,
-            pady=10
+        send_btn = tk.Button(
+            bottom,
+            text="Gửi",
+            command=self.send,
+            bg="#6c5ce7",
+            fg="white",
+            font=("Segoe UI", 10, "bold"),
+            relief="flat",
+            padx=16,
+            cursor="hand2"
         )
-        join_btn.pack(side='left', padx=5)
+        send_btn.pack(side="right")
 
-        cancel_btn = tk.Button(
-            btn_frame,
-            text="❌ Hủy",
-            command=self.cancel,
-            bg='#f45b69',
-            fg='white',
-            font=('Segoe UI', 11, 'bold'),
-            cursor='hand2',
-            relief='flat',
-            padx=30,
-            pady=10
-        )
-        cancel_btn.pack(side='left', padx=5)
+        self.win.protocol("WM_DELETE_WINDOW", self.on_close)
 
-    def submit(self):
-        username = self.username_entry.get().strip()
-        if username:
-            self.result = username
-            self.dialog.destroy()
-        else:
-            messagebox.showwarning("Cảnh báo", "Vui lòng nhập tên người dùng!")
+    def append(self, text: str):
+        self.text.config(state="normal")
+        self.text.insert("end", text)
+        self.text.see("end")
+        self.text.config(state="disabled")
 
-    def cancel(self):
-        self.dialog.destroy()
+    def send(self):
+        msg = self.entry.get().strip()
+        if not msg:
+            return
+        if self.parent_gui.client.send_private(self.target, msg):
+            ts = datetime.now().strftime("%H:%M:%S")
+            self.append(f"[{ts}] Bạn: {msg}\n")
+            self.entry.delete(0, "end")
 
-    def show(self):
-        self.dialog.wait_window()
-        return self.result
+    def on_close(self):
+        self.parent_gui.pm_windows.pop(self.target, None)
+        self.win.destroy()
 
+
+# ======================= GIAO DIỆN CHÍNH CLIENT =======================
 
 class ClientGUI:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("💬 TCP Chat Client")
-        self.root.geometry("1000x700")
-        self.root.configure(bg='#1e1e1e')
+        self.root.title("🐱 Chat Client")
+        self.root.geometry("1000x650")
+        self.root.configure(bg="#f1f2f6")
 
         self.client = ChatClient()
-        self.current_room = "Phòng chung"
-        self.is_admin_current_room = False
-
-        self.setup_ui()
-
+        self.client.message_callback = self.display_message
         self.client.user_list_callback = self.update_user_list
         self.client.room_list_callback = self.update_room_list
         self.client.room_joined_callback = self.on_room_joined
+        self.client.image_callback = self.on_image_received
 
-        self.root.after(100, self.show_login)
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.current_room = "Phòng chung"
+        self.is_admin_current_room = False
 
+        self.pm_windows = {}  # username -> PrivateChatWindow
+
+        self._avatar_img = None
+
+        self.setup_ui()
+
+        # sau khi dựng UI thì mở login
+        self.root.after(200, self.show_login)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    # ------------- UI CHÍNH -------------
     def setup_ui(self):
-        header_frame = tk.Frame(self.root, bg='#0d7377', height=90)
-        header_frame.pack(fill='x')
-        header_frame.pack_propagate(False)
+        # top bar
+        top = tk.Frame(self.root, bg="#6c5ce7", height=60)
+        top.pack(fill="x")
+        top.pack_propagate(False)
 
-        title_label = tk.Label(
-            header_frame,
-            text="💬 Chat Application (Lobby + Rooms + QTV)",
-            bg='#0d7377',
-            fg='white',
-            font=('Segoe UI', 22, 'bold')
+        self.lbl_user = tk.Label(
+            top,
+            text="Chưa đăng nhập",
+            bg="#6c5ce7",
+            fg="white",
+            font=("Segoe UI", 11, "bold")
         )
-        title_label.pack(expand=True)
+        self.lbl_user.pack(side="left", padx=10)
 
-        status_frame = tk.Frame(self.root, bg='#2d2d2d', relief='groove', bd=2)
-        status_frame.pack(fill='x', padx=10, pady=10)
-
-        self.status_label = tk.Label(
-            status_frame,
-            text="⚫ Chưa kết nối",
-            bg='#2d2d2d',
-            fg='#ff6b6b',
-            font=('Segoe UI', 10, 'bold'),
-            anchor='w',
-            padx=15,
-            pady=8
+        self.lbl_status = tk.Label(
+            top,
+            text="🔴 Offline",
+            bg="#6c5ce7",
+            fg="#ffeaa7",
+            font=("Segoe UI", 10)
         )
-        self.status_label.pack(side='left', fill='x', expand=True)
+        self.lbl_status.pack(side="left", padx=10)
 
-        self.user_label = tk.Label(
-            status_frame,
-            text="👤 Chưa đăng nhập",
-            bg='#2d2d2d',
-            fg='#ffd43b',
-            font=('Segoe UI', 10, 'bold'),
-            anchor='e',
-            padx=15,
-            pady=8
+        self.avatar_label = tk.Label(top, bg="#6c5ce7")
+        self.avatar_label.pack(side="right", padx=10, pady=5)
+
+        avatar_btn = tk.Button(
+            top,
+            text="🖼 Avatar",
+            command=self.change_avatar,
+            bg="#8e44ad",
+            fg="white",
+            relief="flat",
+            font=("Segoe UI", 9, "bold"),
+            cursor="hand2"
         )
-        self.user_label.pack(side='right')
+        avatar_btn.pack(side="right", padx=5)
 
-        body_frame = tk.Frame(self.root, bg='#1e1e1e')
-        body_frame.pack(fill='both', expand=True, padx=10, pady=(0, 10))
+        # main body: left = user/room list, right = chat
+        body = tk.Frame(self.root, bg="#f1f2f6")
+        body.pack(fill="both", expand=True)
 
-        # -------- CHAT --------
-        left_frame = tk.Frame(body_frame, bg='#1e1e1e')
-        left_frame.pack(side='left', fill='both', expand=True, padx=(10, 5))
+        # left panel
+        left = tk.Frame(body, bg="#dfe6e9", width=220)
+        left.pack(side="left", fill="y")
+        left.pack_propagate(False)
 
-        chat_label = tk.Label(
-            left_frame,
-            text="💭 Tin nhắn:",
-            bg='#1e1e1e',
-            fg='white',
-            font=('Segoe UI', 11, 'bold'),
-            anchor='w'
-        )
-        chat_label.pack(fill='x', pady=(5, 5))
+        tab_control = ttk.Notebook(left)
+        tab_control.pack(fill="both", expand=True, padx=5, pady=5)
 
-        chat_frame = tk.Frame(left_frame, bg='#2d2d2d', relief='sunken', bd=2)
-        chat_frame.pack(fill='both', expand=True, pady=(0, 10))
+        self.user_tab = tk.Frame(tab_control, bg="#dfe6e9")
+        self.room_tab = tk.Frame(tab_control, bg="#dfe6e9")
+        tab_control.add(self.user_tab, text="Bạn bè")
+        tab_control.add(self.room_tab, text="Phòng")
 
-        self.chat_text = scrolledtext.ScrolledText(
-            chat_frame,
-            wrap=tk.WORD,
-            bg='#0d1117',
-            fg='white',
-            font=('Segoe UI', 10),
-            relief='flat',
-            padx=15,
-            pady=15,
-            state='disabled'
-        )
-        self.chat_text.pack(fill='both', expand=True, padx=2, pady=2)
-
-        self.chat_text.tag_config('self', foreground='#58a6ff')
-        self.chat_text.tag_config('other', foreground='#79c0ff')
-        self.chat_text.tag_config('server', foreground='#ffd43b')
-        self.chat_text.tag_config('system', foreground='#8b949e')
-        self.chat_text.tag_config('history', foreground='#6e7681')
-        self.chat_text.tag_config('error', foreground='#ff6b6b')
-
-        # -------- SIDEBAR --------
-        right_frame = tk.Frame(body_frame, bg='#1e1e1e')
-        right_frame.pack(side='right', fill='y', padx=(5, 10))
-
-        # Online users
-        user_label = tk.Label(
-            right_frame,
-            text="👥 Người đang online:",
-            bg='#1e1e1e',
-            fg='white',
-            font=('Segoe UI', 11, 'bold'),
-            anchor='w'
-        )
-        user_label.pack(fill='x', pady=(5, 5))
-
+        # user list
         self.user_listbox = tk.Listbox(
-            right_frame,
-            bg='#0d1117',
-            fg='white',
-            font=('Segoe UI', 10),
-            height=8,
-            selectbackground='#32de84',
-            relief='flat',
-            activestyle='none'
+            self.user_tab,
+            bg="white",
+            fg="#2d3436",
+            font=("Segoe UI", 10),
+            activestyle="none"
         )
-        self.user_listbox.pack(fill='x', padx=2, pady=(0, 5))
+        self.user_listbox.pack(fill="both", expand=True, padx=5, pady=5)
+        self.user_listbox.bind("<Double-Button-1>", self.open_private_chat)
 
-        user_hint = tk.Label(
-            right_frame,
-            text="Double-click để nhắn riêng 😉",
-            bg='#1e1e1e',
-            fg='#bbbbbb',
-            font=('Segoe UI', 9),
-            justify='center'
-        )
-        user_hint.pack(pady=(0, 5))
-
-        self.user_listbox.bind('<Double-Button-1>', self.on_user_double_click)
-
-        pm_btn = tk.Button(
-            right_frame,
-            text="✉ Nhắn riêng",
-            command=self.pm_selected_user,
-            bg='#456990',
-            fg='white',
-            font=('Segoe UI', 10, 'bold'),
-            cursor='hand2',
-            relief='flat',
-            padx=10,
-            pady=5
-        )
-        pm_btn.pack(fill='x', pady=(0, 10))
-
-        # Rooms
-        room_label = tk.Label(
-            right_frame,
-            text="🏠 Phòng chat:",
-            bg='#1e1e1e',
-            fg='white',
-            font=('Segoe UI', 11, 'bold'),
-            anchor='w'
-        )
-        room_label.pack(fill='x', pady=(5, 5))
-
+        # room list
         self.room_listbox = tk.Listbox(
-            right_frame,
-            bg='#0d1117',
-            fg='white',
-            font=('Segoe UI', 10),
-            height=8,
-            selectbackground='#ffb703',
-            relief='flat',
-            activestyle='none'
+            self.room_tab,
+            bg="white",
+            fg="#2d3436",
+            font=("Segoe UI", 10),
+            activestyle="none"
         )
-        self.room_listbox.pack(fill='x', padx=2, pady=(0, 5))
+        self.room_listbox.pack(fill="both", expand=True, padx=5, pady=(5, 0))
+        self.room_listbox.bind("<Double-Button-1>", self.join_selected_room)
 
-        room_hint = tk.Label(
-            right_frame,
-            text="Double-click phòng để tham gia.\nPhòng 🔒 là private.",
-            bg='#1e1e1e',
-            fg='#bbbbbb',
-            font=('Segoe UI', 9),
-            justify='center'
-        )
-        room_hint.pack(pady=(0, 5))
+        room_btns = tk.Frame(self.room_tab, bg="#dfe6e9")
+        room_btns.pack(fill="x", padx=5, pady=5)
 
-        self.room_listbox.bind('<Double-Button-1>', self.on_room_double_click)
-
-        btn_room_frame = tk.Frame(right_frame, bg='#1e1e1e')
-        btn_room_frame.pack(fill='x', pady=(5, 5))
-
-        create_room_btn = tk.Button(
-            btn_room_frame,
-            text="➕ Tạo phòng",
+        tk.Button(
+            room_btns,
+            text="Tạo phòng",
             command=self.create_room_dialog,
-            bg='#32de84',
-            fg='white',
-            font=('Segoe UI', 10, 'bold'),
-            cursor='hand2',
-            relief='flat',
-            padx=10,
-            pady=5
-        )
-        create_room_btn.pack(fill='x', pady=(0, 5))
+            bg="#6c5ce7",
+            fg="white",
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            cursor="hand2"
+        ).pack(side="left", padx=2)
 
-        join_room_btn = tk.Button(
-            btn_room_frame,
-            text="➡ Tham gia phòng",
+        tk.Button(
+            room_btns,
+            text="Vào phòng",
             command=self.join_selected_room,
-            bg='#fca311',
-            fg='white',
-            font=('Segoe UI', 10, 'bold'),
-            cursor='hand2',
-            relief='flat',
-            padx=10,
-            pady=5
+            bg="#00cec9",
+            fg="white",
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            cursor="hand2"
+        ).pack(side="left", padx=2)
+
+        # right panel = chat area
+        right = tk.Frame(body, bg="#f1f2f6")
+        right.pack(side="left", fill="both", expand=True)
+
+        # chat header
+        header = tk.Frame(right, bg="#f1f2f6", height=40)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        self.room_label = tk.Label(
+            header,
+            text="Phòng: Phòng chung",
+            bg="#f1f2f6",
+            fg="#2d3436",
+            font=("Segoe UI", 11, "bold")
         )
-        join_room_btn.pack(fill='x', pady=(0, 5))
+        self.room_label.pack(side="left", padx=10, pady=10)
 
-        # QTV controls
-        admin_label = tk.Label(
-            right_frame,
-            text="⭐ Quyền QTV (phòng hiện tại):",
-            bg='#1e1e1e',
-            fg='white',
-            font=('Segoe UI', 10, 'bold'),
-            anchor='w'
+        self.admin_label = tk.Label(
+            header,
+            text="",
+            bg="#f1f2f6",
+            fg="#e74c3c",
+            font=("Segoe UI", 10, "bold")
         )
-        admin_label.pack(fill='x', pady=(10, 5))
+        self.admin_label.pack(side="right", padx=10)
 
-        self.admin_btn_kick = tk.Button(
-            right_frame,
-            text="👢 Kick khỏi phòng",
-            command=self.admin_kick_selected_user,
-            bg='#e63946',
-            fg='white',
-            font=('Segoe UI', 10, 'bold'),
-            cursor='hand2',
-            relief='flat',
-            padx=10,
-            pady=5,
-            state='disabled'
+        # chat display
+        self.chat_display = scrolledtext.ScrolledText(
+            right,
+            wrap="word",
+            bg="white",
+            fg="#2d3436",
+            font=("Segoe UI", 10)
         )
-        self.admin_btn_kick.pack(fill='x', pady=(0, 3))
+        self.chat_display.pack(fill="both", expand=True, padx=10, pady=(0, 5))
+        self.chat_display.config(state="disabled")
 
-        self.admin_btn_rename = tk.Button(
-            right_frame,
-            text="✏ Đổi tên phòng",
-            command=self.admin_rename_room,
-            bg='#457b9d',
-            fg='white',
-            font=('Segoe UI', 10, 'bold'),
-            cursor='hand2',
-            relief='flat',
-            padx=10,
-            pady=5,
-            state='disabled'
-        )
-        self.admin_btn_rename.pack(fill='x', pady=(0, 3))
-
-        self.admin_btn_pass = tk.Button(
-            right_frame,
-            text="🔐 Đổi mật khẩu",
-            command=self.admin_change_password,
-            bg='#1d3557',
-            fg='white',
-            font=('Segoe UI', 10, 'bold'),
-            cursor='hand2',
-            relief='flat',
-            padx=10,
-            pady=5,
-            state='disabled'
-        )
-        self.admin_btn_pass.pack(fill='x', pady=(0, 3))
-
-        # Input message
-        input_frame = tk.Frame(self.root, bg='#1e1e1e')
-        input_frame.pack(fill='x', padx=20, pady=(0, 15))
-
-        entry_container = tk.Frame(input_frame, bg='#2d2d2d', relief='flat', bd=2)
-        entry_container.pack(side='left', fill='both', expand=True, padx=(0, 10))
+        # bottom input
+        bottom = tk.Frame(right, bg="#f1f2f6")
+        bottom.pack(fill="x", padx=10, pady=(0, 10))
 
         self.message_entry = tk.Entry(
-            entry_container,
-            font=('Segoe UI', 11),
-            bg='#0d1117',
-            fg='white',
-            relief='flat',
-            insertbackground='white'
+            bottom,
+            font=("Segoe UI", 10),
+            relief="solid",
+            bd=1
         )
-        self.message_entry.pack(fill='both', expand=True, padx=10, pady=8)
-        self.message_entry.bind('<Return>', lambda e: self.send_message())
-        self.message_entry.config(state='disabled')
+        self.message_entry.pack(side="left", fill="x", expand=True, padx=(0, 5),
+                                pady=2)
+        self.message_entry.bind("<Return>", lambda e: self.send_message())
 
-        self.send_btn = tk.Button(
-            input_frame,
-            text="📤 Gửi",
+        send_btn = tk.Button(
+            bottom,
+            text="Gửi",
             command=self.send_message,
-            bg='#32de84',
-            fg='white',
-            font=('Segoe UI', 11, 'bold'),
-            cursor='hand2',
-            relief='flat',
-            padx=25,
-            pady=8,
-            state='disabled'
+            bg="#6c5ce7",
+            fg="white",
+            font=("Segoe UI", 10, "bold"),
+            relief="flat",
+            padx=18,
+            cursor="hand2"
         )
-        self.send_btn.pack(side='left', padx=2)
+        send_btn.pack(side="right", padx=(5, 0))
 
-        self.disconnect_btn = tk.Button(
-            input_frame,
-            text="🔌 Ngắt kết nối",
-            command=self.disconnect,
-            bg='#f45b69',
-            fg='white',
-            font=('Segoe UI', 11, 'bold'),
-            cursor='hand2',
-            relief='flat',
-            padx=15,
-            pady=8,
-            state='disabled'
+        img_btn = tk.Button(
+            bottom,
+            text="📷",
+            command=self.send_image,
+            bg="#00cec9",
+            fg="white",
+            font=("Segoe UI", 10, "bold"),
+            relief="flat",
+            padx=10,
+            cursor="hand2"
         )
-        self.disconnect_btn.pack(side='left', padx=2)
+        img_btn.pack(side="right", padx=(5, 0))
 
-        footer = tk.Label(
-            self.root,
-            text="TCP Chat Client | Online list + Rooms (Public/Private) + PM + QTV | Server: 127.0.0.1:5555",
-            bg='#1e1e1e',
-            fg='#888',
-            font=('Segoe UI', 8)
+        hist_btn = tk.Button(
+            bottom,
+            text="Lịch sử",
+            command=self.request_history,
+            bg="#b2bec3",
+            fg="#2d3436",
+            font=("Segoe UI", 9),
+            relief="flat",
+            padx=10,
+            cursor="hand2"
         )
-        footer.pack(pady=5)
+        hist_btn.pack(side="right", padx=(5, 0))
 
-    # -------- LOGIN & CONNECT --------
+    # ------------- LOGIN -------------
     def show_login(self):
-        dialog = LoginDialog(self.root)
-        username = dialog.show()
-        if username:
-            self.connect(username)
-        else:
-            self.root.quit()
+        dlg = LoginDialog(self.root)
+        info = dlg.show()
+        if not info:
+            self.root.destroy()
+            return
 
-    def connect(self, username):
-        if self.client.connect(username, self.display_message):
-            self.current_room = "Phòng chung"
-            self.is_admin_current_room = False
-            self.update_admin_buttons_state()
+        username = info["username"]
+        password = info["password"]
+        action = info["action"]
 
-            self.user_label.config(
-                text=f"👤 {username} | 🏠 Phòng: {self.current_room}"
-            )
-            self.status_label.config(
-                text="🟢 Đã kết nối",
-                fg='#51cf66'
-            )
-            self.message_entry.config(state='normal')
-            self.send_btn.config(state='normal')
-            self.disconnect_btn.config(state='normal')
-            self.display_message(
-                f"[SYSTEM] Đã kết nối, bạn đang ở phòng '{self.current_room}'\n",
-                "system"
-            )
+        ok = self.client.connect(username, password, action, self.display_message)
+        if not ok:
+            # nếu fail thì mở lại login
+            self.root.after(200, self.show_login)
+            return
 
-    # -------- UI HELPERS --------
-    def display_message(self, message, tag="other"):
-        self.chat_text.config(state='normal')
-        self.chat_text.insert(tk.END, message, tag)
-        self.chat_text.see(tk.END)
-        self.chat_text.config(state='disabled')
+        self.lbl_user.config(text=f"{username}")
+        self.lbl_status.config(text="🟢 Online", fg="#2ecc71")
+        self.current_room = "Phòng chung"
+        self.room_label.config(text="Phòng: Phòng chung")
 
+        if self.client.current_avatar:
+            self.set_avatar_from_b64(self.client.current_avatar)
+
+        self.display_message(
+            f"[SYSTEM] Đã đăng nhập thành công, vào Phòng chung.\n",
+            "system"
+        )
+
+    # ------------- AVATAR -------------
+    def set_avatar_from_b64(self, avatar_b64: str):
+        if not PIL_AVAILABLE or not avatar_b64:
+            return
+        try:
+            raw = base64.b64decode(avatar_b64)
+            img = Image.open(BytesIO(raw))
+            img = img.resize((48, 48))
+            tk_img = ImageTk.PhotoImage(img)
+            self._avatar_img = tk_img
+            self.avatar_label.config(image=tk_img)
+        except Exception as e:
+            print("set_avatar_from_b64 error:", e)
+
+    def change_avatar(self):
+        if not PIL_AVAILABLE:
+            messagebox.showerror("Thiếu thư viện", "Cần cài pillow: pip install pillow")
+            return
+        if not self.client.connected:
+            messagebox.showwarning("Avatar", "Bạn chưa đăng nhập.")
+            return
+
+        file_path = filedialog.askopenfilename(
+            title="Chọn ảnh đại diện",
+            filetypes=[("Ảnh", "*.png;*.jpg;*.jpeg;*.gif;*.bmp"),
+                       ("Tất cả", "*.*")]
+        )
+        if not file_path:
+            return
+        try:
+            with open(file_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("utf-8")
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không đọc được file: {e}")
+            return
+
+        if self.client.update_avatar(b64):
+            self.set_avatar_from_b64(b64)
+            messagebox.showinfo("Avatar", "Đã gửi avatar lên server.")
+
+    # ------------- GỬI / NHẬN TIN -------------
+    def display_message(self, text: str, tag: str = "system"):
+        self.chat_display.config(state="normal")
+        self.chat_display.insert("end", text)
+        self.chat_display.see("end")
+        self.chat_display.config(state="disabled")
+
+    def send_message(self):
+        msg = self.message_entry.get().strip()
+        if not msg:
+            return
+        if not self.client.connected:
+            messagebox.showwarning("Chat", "Bạn chưa đăng nhập.")
+            return
+
+        if self.client.send_chat(msg, self.current_room):
+            self.message_entry.delete(0, "end")
+
+    def send_image(self):
+        if not PIL_AVAILABLE:
+            messagebox.showerror("Thiếu thư viện", "Cần cài pillow: pip install pillow")
+            return
+        if not self.client.connected:
+            messagebox.showwarning("Chat", "Bạn chưa đăng nhập.")
+            return
+
+        file_path = filedialog.askopenfilename(
+            title="Chọn ảnh để gửi",
+            filetypes=[("Ảnh", "*.png;*.jpg;*.jpeg;*.gif;*.bmp"),
+                       ("Tất cả", "*.*")]
+        )
+        if not file_path:
+            return
+
+        caption = simpledialog.askstring(
+            "Chú thích",
+            "Nhập chú thích (không bắt buộc):",
+            parent=self.root
+        ) or ""
+
+        try:
+            with open(file_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("utf-8")
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không đọc được file: {e}")
+            return
+
+        filename = file_path.split("/")[-1]
+        if not self.client.send_image(b64, filename, caption, self.current_room):
+            messagebox.showerror("Lỗi", "Không thể gửi ảnh.")
+
+    def on_image_received(self, data: dict):
+        if not PIL_AVAILABLE:
+            return
+
+        img_b64 = data.get("image_data")
+        filename = data.get("filename", "image")
+        sender = data.get("sender", "???")
+
+        try:
+            raw = base64.b64decode(img_b64)
+            img = Image.open(BytesIO(raw))
+        except Exception as e:
+            print("on_image_received decode error:", e)
+            return
+
+        # thu nhỏ nếu quá to
+        max_size = (800, 600)
+        img.thumbnail(max_size)
+
+        tk_img = ImageTk.PhotoImage(img)
+
+        # giữ tham chiếu
+        if not hasattr(self, "_img_cache"):
+            self._img_cache = []
+        self._img_cache.append(tk_img)
+
+        win = tk.Toplevel(self.root)
+        win.title(f"Ảnh từ {sender}: {filename}")
+        lbl = tk.Label(win, image=tk_img, bg="black")
+        lbl.pack(fill="both", expand=True)
+
+        win.geometry("600x400")
+
+    # ------------- USER / ROOM LIST -------------
     def update_user_list(self, users):
-        self.user_listbox.delete(0, tk.END)
+        self.user_listbox.delete(0, "end")
         for u in users:
-            label = u
-            if u == self.client.username:
-                label += " (bạn)"
-            self.user_listbox.insert(tk.END, label)
+            self.user_listbox.insert("end", u)
 
     def update_room_list(self, rooms):
-        self.room_listbox.delete(0, tk.END)
+        self.room_listbox.delete(0, "end")
         for r in rooms:
-            name = r.get('name', '???')
-            is_private = r.get('is_private', False)
-            members_count = r.get('members_count', 0)
-            label = name
-            if is_private:
-                label += " 🔒"
-            label += f" ({members_count})"
-            self.room_listbox.insert(tk.END, label)
+            self.room_listbox.insert("end", r)
 
-    def extract_username_from_listbox(self, text):
-        return text.split(' (')[0]
+    def on_room_joined(self, room, creator, is_admin):
+        self.current_room = room
+        self.room_label.config(text=f"Phòng: {room}")
+        self.is_admin_current_room = is_admin
+        if is_admin:
+            self.admin_label.config(text="QTV")
+        else:
+            self.admin_label.config(text="")
 
-    def extract_room_name_from_listbox(self, text):
-        if " 🔒" in text:
-            text = text.split(" 🔒")[0]
-        if " (" in text:
-            text = text.split(" (")[0]
-        return text
+        self.display_message(f"[SYSTEM] Đã vào phòng {room}.\n", "system")
 
-    def on_user_double_click(self, event):
-        self.pm_selected_user()
-
-    def pm_selected_user(self):
+    def open_private_chat(self, event=None):
         selection = self.user_listbox.curselection()
         if not selection:
-            messagebox.showinfo("Nhắn riêng", "Hãy chọn 1 người trong danh sách online.")
             return
-        item = self.user_listbox.get(selection[0])
-        target = self.extract_username_from_listbox(item)
+        target = self.user_listbox.get(selection[0])
         if target == self.client.username:
-            messagebox.showinfo("Nhắn riêng", "Không cần nhắn riêng chính mình 😆")
             return
 
-        msg = simpledialog.askstring(
-            "Nhắn riêng",
-            f"Nhập tin nhắn gửi riêng cho {target}:",
-            parent=self.root
-        )
-        if msg:
-            if not self.client.send_private_message(target, msg):
-                messagebox.showerror("Lỗi", "Không thể gửi tin nhắn riêng!")
+        win = self.pm_windows.get(target)
+        if not win:
+            win = PrivateChatWindow(self, target)
+            self.pm_windows[target] = win
+        win.win.deiconify()
+        win.win.lift()
 
-    def on_room_double_click(self, event):
-        self.join_selected_room()
-
-    def join_selected_room(self):
+    def join_selected_room(self, event=None):
         selection = self.room_listbox.curselection()
         if not selection:
-            messagebox.showinfo("Tham gia phòng", "Hãy chọn 1 phòng trong danh sách.")
             return
-        item = self.room_listbox.get(selection[0])
-        room_name = self.extract_room_name_from_listbox(item)
-
-        password = ""
-        if "🔒" in item:
-            password = simpledialog.askstring(
-                "Mật khẩu phòng",
-                f"Nhập mật khẩu để vào phòng '{room_name}':",
-                parent=self.root,
-                show='*'
-            )
-            if password is None:
-                return
-
-        if not self.client.join_room(room_name, password):
-            messagebox.showerror("Lỗi", "Không thể gửi yêu cầu tham gia phòng.")
+        room = self.room_listbox.get(selection[0])
+        if room == self.current_room:
+            return
+        password = simpledialog.askstring(
+            "Mật khẩu",
+            "Nhập mật khẩu phòng (nếu có):",
+            show="*"
+        )
+        if password is None:
+            password = ""
+        self.client.join_room(room, password)
 
     def create_room_dialog(self):
-        room_name = simpledialog.askstring(
-            "Tạo phòng chat",
-            "Nhập tên phòng:",
-            parent=self.root
-        )
-        if not room_name:
+        name = simpledialog.askstring("Tạo phòng", "Tên phòng:", parent=self.root)
+        if not name:
             return
-
-        result = messagebox.askyesno(
-            "Loại phòng",
-            "Bạn muốn tạo phòng PRIVATE (có mật khẩu)?\n"
-            "Yes: Private\nNo: Public"
-        )
-        is_private = result
-        password = ""
-        if is_private:
-            password = simpledialog.askstring(
-                "Mật khẩu phòng",
-                f"Đặt mật khẩu cho phòng '{room_name}':",
-                parent=self.root,
-                show='*'
-            )
-            if password is None:
-                return
-
-        if not self.client.create_room(room_name, is_private, password):
-            messagebox.showerror("Lỗi", "Không thể tạo phòng!")
-
-    def on_room_joined(self, room_name, is_admin):
-        self.current_room = room_name
-        self.is_admin_current_room = bool(is_admin) and (room_name != "Phòng chung")
-        self.update_admin_buttons_state()
-        self.user_label.config(
-            text=f"👤 {self.client.username} | 🏠 Phòng: {self.current_room}"
-        )
-
-    def update_admin_buttons_state(self):
-        state = 'normal' if self.is_admin_current_room else 'disabled'
-        self.admin_btn_kick.config(state=state)
-        self.admin_btn_rename.config(state=state)
-        self.admin_btn_pass.config(state=state)
-
-    # -------- QTV ACTIONS --------
-    def admin_kick_selected_user(self):
-        if not self.is_admin_current_room:
-            messagebox.showwarning("QTV", "Bạn không phải QTV phòng hiện tại.")
-            return
-        selection = self.user_listbox.curselection()
-        if not selection:
-            messagebox.showinfo("Kick user", "Hãy chọn 1 người trong danh sách online.")
-            return
-        item = self.user_listbox.get(selection[0])
-        target = self.extract_username_from_listbox(item)
-        if target == self.client.username:
-            messagebox.showinfo("Kick user", "Không thể tự kick chính mình.")
-            return
-
-        if not messagebox.askyesno(
-            "Xác nhận kick",
-            f"Bạn chắc chắn muốn kick {target} khỏi phòng '{self.current_room}'?"
-        ):
-            return
-
-        if not self.client.admin_kick(self.current_room, target):
-            messagebox.showerror("Lỗi", "Không thể gửi lệnh kick.")
-
-    def admin_rename_room(self):
-        if not self.is_admin_current_room:
-            messagebox.showwarning("QTV", "Bạn không phải QTV phòng hiện tại.")
-            return
-        new_name = simpledialog.askstring(
-            "Đổi tên phòng",
-            f"Tên mới cho phòng '{self.current_room}':",
-            parent=self.root
-        )
-        if not new_name:
-            return
-        if not self.client.admin_rename_room(self.current_room, new_name):
-            messagebox.showerror("Lỗi", "Không thể gửi lệnh đổi tên phòng.")
-
-    def admin_change_password(self):
-        if not self.is_admin_current_room:
-            messagebox.showwarning("QTV", "Bạn không phải QTV phòng hiện tại.")
-            return
-        new_pass = simpledialog.askstring(
-            "Đổi mật khẩu phòng",
-            "Nhập mật khẩu mới (để trống = gỡ mật khẩu):",
+        password = simpledialog.askstring(
+            "Mật khẩu",
+            "Đặt mật khẩu (trống nếu phòng công khai):",
             parent=self.root,
-            show='*'
+            show="*"
         )
-        if new_pass is None:
+        if password is None:
+            password = ""
+        self.client.create_room(name, password)
+
+    def request_history(self):
+        if not self.client.connected:
             return
-        if not self.client.admin_change_password(self.current_room, new_pass):
-            messagebox.showerror("Lỗi", "Không thể gửi lệnh đổi mật khẩu.")
+        self.client.request_history(self.current_room)
 
-    # -------- SEND / DISCONNECT --------
-    def send_message(self):
-        message = self.message_entry.get().strip()
-        if message:
-            if self.client.send_message(message):
-                self.message_entry.delete(0, tk.END)
-            else:
-                messagebox.showerror("Lỗi", "Không thể gửi tin nhắn!")
-
-    def disconnect(self):
-        if messagebox.askyesno("Xác nhận", "Bạn có chắc muốn ngắt kết nối?"):
-            self.client.disconnect()
-            self.message_entry.config(state='disabled')
-            self.send_btn.config(state='disabled')
-            self.disconnect_btn.config(state='disabled')
-            self.status_label.config(
-                text="⚫ Đã ngắt kết nối",
-                fg='#ff6b6b'
-            )
-            self.update_user_list([])
-            self.update_room_list([])
-            self.is_admin_current_room = False
-            self.update_admin_buttons_state()
-
-    def on_closing(self):
+    # ------------- ĐÓNG APP -------------
+    def on_close(self):
         if self.client.connected:
             if messagebox.askokcancel("Thoát", "Bạn có chắc muốn thoát?"):
                 self.client.disconnect()
