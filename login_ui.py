@@ -1,189 +1,63 @@
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import ttk
 
 
 class LoginDialog:
-    """
-    Hộp thoại đăng nhập / đăng kí.
-
-    Dùng:
-        dialog = LoginDialog(root)
-        info = dialog.show()   # dict {"username","password","action"} hoặc None nếu huỷ
-    """
-    def __init__(self, parent):
+    def __init__(self, master):
+        self.master = master
         self.result = None
 
-        self.dialog = tk.Toplevel(parent)
-        self.dialog.title("Đăng nhập / Đăng kí")
-        self.dialog.geometry("420x360")
-        self.dialog.configure(bg='#1e1e1e')
-        self.dialog.resizable(False, False)
-
-        # đặt giữa màn hình
-        self.dialog.update_idletasks()
-        w = 420
-        h = 360
-        x = (self.dialog.winfo_screenwidth() // 2) - w // 2
-        y = (self.dialog.winfo_screenheight() // 2) - h // 2
-        self.dialog.geometry(f"{w}x{h}+{x}+{y}")
-
-        self.dialog.transient(parent)
-        self.dialog.grab_set()
-
-        self.action_var = tk.StringVar(value="login")  # "login" hoặc "register"
-
-        self._build_ui()
-
-    def _build_ui(self):
-        header = tk.Frame(self.dialog, bg='#6c5ce7', height=80)
-        header.pack(fill='x')
-        header.pack_propagate(False)
-
-        title = tk.Label(
-            header,
-            text="🐱 Chat App",
-            bg='#6c5ce7',
-            fg='white',
-            font=('Segoe UI', 18, 'bold')
-        )
-        title.pack(pady=(10, 0))
-
-        subtitle = tk.Label(
-            header,
-            text="Đăng nhập hoặc đăng kí để tiếp tục",
-            bg='#6c5ce7',
-            fg='white',
-            font=('Segoe UI', 10)
-        )
-        subtitle.pack(pady=(0, 10))
-
-        body = tk.Frame(self.dialog, bg='#1e1e1e')
-        body.pack(fill='both', expand=True, padx=30, pady=20)
-
-        # chọn chế độ
-        mode_frame = tk.Frame(body, bg='#1e1e1e')
-        mode_frame.pack(fill='x', pady=(0, 10))
-
-        rb_login = tk.Radiobutton(
-            mode_frame,
-            text="Đăng nhập",
-            variable=self.action_var,
-            value="login",
-            bg='#1e1e1e',
-            fg='white',
-            selectcolor='#1e1e1e',
-            activebackground='#1e1e1e',
-            font=('Segoe UI', 10)
-        )
-        rb_login.pack(side='left', padx=5)
-
-        rb_register = tk.Radiobutton(
-            mode_frame,
-            text="Đăng kí",
-            variable=self.action_var,
-            value="register",
-            bg='#1e1e1e',
-            fg='white',
-            selectcolor='#1e1e1e',
-            activebackground='#1e1e1e',
-            font=('Segoe UI', 10)
-        )
-        rb_register.pack(side='left', padx=5)
+        self.top = tk.Toplevel(master)
+        self.top.title("Đăng nhập chat")
+        self.top.geometry("320x220")
+        self.top.resizable(False, False)
+        self.top.grab_set()
+        self.top.configure(bg="#f0f0f0")
 
         # username
-        user_frame = tk.Frame(body, bg='#2d2d2d')
-        user_frame.pack(fill='x', pady=(5, 10))
-
-        user_icon = tk.Label(user_frame, text="👤", bg='#2d2d2d', fg='white',
-                             font=('Segoe UI', 14))
-        user_icon.pack(side='left', padx=8)
-
-        self.username_entry = tk.Entry(
-            user_frame,
-            bg='#2d2d2d',
-            fg='white',
-            relief='flat',
-            font=('Segoe UI', 12),
-            insertbackground='white'
-        )
-        self.username_entry.pack(side='left', fill='x', expand=True,
-                                 padx=(0, 8), pady=8)
+        tk.Label(self.top, text="Tài khoản:", bg="#f0f0f0").pack(anchor="w", padx=16, pady=(16, 2))
+        self.username_entry = ttk.Entry(self.top)
+        self.username_entry.pack(fill="x", padx=16)
 
         # password
-        pwd_frame = tk.Frame(body, bg='#2d2d2d')
-        pwd_frame.pack(fill='x', pady=(0, 10))
+        tk.Label(self.top, text="Mật khẩu:", bg="#f0f0f0").pack(anchor="w", padx=16, pady=(10, 2))
+        self.password_entry = ttk.Entry(self.top, show="*")
+        self.password_entry.pack(fill="x", padx=16)
 
-        pwd_icon = tk.Label(pwd_frame, text="🔑", bg='#2d2d2d', fg='white',
-                            font=('Segoe UI', 14))
-        pwd_icon.pack(side='left', padx=8)
-
-        self.password_entry = tk.Entry(
-            pwd_frame,
-            bg='#2d2d2d',
-            fg='white',
-            relief='flat',
-            font=('Segoe UI', 12),
-            insertbackground='white',
-            show='*'
-        )
-        self.password_entry.pack(side='left', fill='x', expand=True,
-                                 padx=(0, 8), pady=8)
-        self.password_entry.bind('<Return>', lambda e: self.submit())
+        # radio login / register
+        self.action_var = tk.StringVar(value="login")
+        frame_radio = tk.Frame(self.top, bg="#f0f0f0")
+        frame_radio.pack(anchor="w", padx=16, pady=(10, 4))
+        ttk.Radiobutton(frame_radio, text="Đăng nhập", value="login",
+                        variable=self.action_var).pack(side="left")
+        ttk.Radiobutton(frame_radio, text="Đăng ký", value="register",
+                        variable=self.action_var).pack(side="left", padx=(10, 0))
 
         # buttons
-        btn_frame = tk.Frame(body, bg='#1e1e1e')
-        btn_frame.pack(pady=20)
+        btn_frame = tk.Frame(self.top, bg="#f0f0f0")
+        btn_frame.pack(fill="x", padx=16, pady=(16, 10))
+        ttk.Button(btn_frame, text="OK", command=self.on_ok).pack(side="right")
+        ttk.Button(btn_frame, text="Hủy", command=self.on_cancel).pack(side="right", padx=(0, 8))
 
-        ok_btn = tk.Button(
-            btn_frame,
-            text="Tiếp tục",
-            command=self.submit,
-            bg='#00cec9',
-            fg='white',
-            font=('Segoe UI', 11, 'bold'),
-            relief='flat',
-            padx=28,
-            pady=8,
-            cursor='hand2'
-        )
-        ok_btn.pack(side='left', padx=5)
+        self.username_entry.focus_set()
+        self.top.bind("<Return>", lambda e: self.on_ok())
 
-        cancel_btn = tk.Button(
-            btn_frame,
-            text="Huỷ",
-            command=self.cancel,
-            bg='#d63031',
-            fg='white',
-            font=('Segoe UI', 11, 'bold'),
-            relief='flat',
-            padx=28,
-            pady=8,
-            cursor='hand2'
-        )
-        cancel_btn.pack(side='left', padx=5)
-
-        self.username_entry.focus()
-
-    def submit(self):
-        username = self.username_entry.get().strip()
-        password = self.password_entry.get().strip()
-
-        if not username or not password:
-            messagebox.showwarning("Thiếu thông tin",
-                                   "Vui lòng nhập đầy đủ tên và mật khẩu.")
+    def on_ok(self):
+        u = self.username_entry.get().strip()
+        p = self.password_entry.get().strip()
+        if not u or not p:
             return
-
         self.result = {
-            "username": username,
-            "password": password,
+            "username": u,
+            "password": p,
             "action": self.action_var.get()
         }
-        self.dialog.destroy()
+        self.top.destroy()
 
-    def cancel(self):
+    def on_cancel(self):
         self.result = None
-        self.dialog.destroy()
+        self.top.destroy()
 
     def show(self):
-        self.dialog.wait_window()
+        self.master.wait_window(self.top)
         return self.result
