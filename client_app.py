@@ -288,6 +288,8 @@ class ChatClient:
 
     # ---------- gửi tiện lợi ----------
     def send_chat(self, message: str, room: str = None):
+        # server chỉ dùng room hiện tại trong session,
+        # nhưng ta vẫn gửi thêm room cho rõ ràng
         data = {"type": "chat", "message": message}
         if room:
             data["room"] = room
@@ -302,21 +304,19 @@ class ChatClient:
         return self.send_packet(data)
 
     def create_room(self, room_name: str, password: str = ""):
-        """
-        Gửi đúng format server: room_name, is_private, password
-        """
+        # ĐÃ SỬA: gửi đúng key "room" để server nhận
         data = {
             "type": "create_room",
-            "room_name": room_name,
-            "is_private": bool(password),
+            "room": room_name,
             "password": password or "",
         }
         return self.send_packet(data)
 
     def join_room(self, room_name: str, password: str = ""):
+        # ĐÃ SỬA: gửi đúng key "room"
         data = {
             "type": "join_room",
-            "room_name": room_name,
+            "room": room_name,
             "password": password or "",
         }
         return self.send_packet(data)
@@ -343,9 +343,9 @@ class ChatClient:
 class ClientGUI:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("Chat App")
+        self.root.title("Cute Chat")
         self.root.geometry("1100x650")
-        self.root.configure(bg="#18191a")
+        self.root.configure(bg="#dfe3ee")
 
         self.client = ChatClient()
 
@@ -359,99 +359,101 @@ class ClientGUI:
 
     # ---------- UI ----------
     def build_layout(self):
-        # khung chính
+        # Layout 3 cột: sidebar trái, khu chat giữa, info phải
         self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=0)
         self.root.grid_columnconfigure(1, weight=1)
+        self.root.grid_columnconfigure(2, weight=0)
 
         # ========== LEFT: ROOM & USER ==========
-        left = tk.Frame(self.root, bg="#242526", width=260)
+        left = tk.Frame(self.root, bg="#f0f2f5", width=260, bd=0, highlightthickness=0)
         left.grid(row=0, column=0, sticky="nsw")
         left.grid_propagate(False)
 
-        app_label = tk.Label(
-            left,
-            text="Messenger Mini",
-            bg="#242526",
-            fg="#e4e6eb",
-            font=("Segoe UI", 12, "bold"),
-        )
-        app_label.pack(anchor="w", padx=12, pady=(10, 4))
+        top_bar = tk.Frame(left, bg="#ffffff", height=50)
+        top_bar.pack(fill="x")
+        tk.Label(
+            top_bar,
+            text="  ✉ Chat App",
+            bg="#ffffff",
+            fg="#111",
+            font=("Segoe UI", 11, "bold"),
+        ).pack(anchor="w", padx=10, pady=10)
 
-        # tạo phòng
         create_btn = tk.Button(
             left,
             text="+ Tạo phòng",
             command=self.create_room_dialog,
-            bg="#3a3b3c",
-            fg="#e4e6eb",
+            bg="#9b59b6",
+            fg="white",
             relief="flat",
-            font=("Segoe UI", 10, "bold"),
+            font=("Segoe UI", 9, "bold"),
             padx=8,
             pady=4,
         )
-        create_btn.pack(fill="x", padx=10, pady=(0, 10))
+        create_btn.pack(fill="x", padx=12, pady=(8, 6))
 
         # danh sách phòng
         room_lbl = tk.Label(
             left,
             text="Phòng chat",
-            bg="#242526",
-            fg="#b0b3b8",
-            font=("Segoe UI", 10, "bold"),
+            bg="#f0f2f5",
+            fg="#555",
+            font=("Segoe UI", 9, "bold"),
         )
-        room_lbl.pack(anchor="w", padx=12, pady=(0, 4))
+        room_lbl.pack(anchor="w", padx=14, pady=(4, 2))
 
         self.room_list = tk.Listbox(
             left,
-            bg="#18191a",
-            fg="#e4e6eb",
+            bg="#ffffff",
+            fg="#111",
             bd=0,
             highlightthickness=0,
             activestyle="dotbox",
-            font=("Segoe UI", 10),
-            height=10,
+            font=("Segoe UI", 9),
+            height=8,
         )
-        self.room_list.pack(fill="x", padx=10)
+        self.room_list.pack(fill="x", padx=12)
         self.room_list.bind("<<ListboxSelect>>", self.on_room_click)
 
         # danh sách user
         user_lbl = tk.Label(
             left,
             text="Người online",
-            bg="#242526",
-            fg="#b0b3b8",
-            font=("Segoe UI", 10, "bold"),
+            bg="#f0f2f5",
+            fg="#555",
+            font=("Segoe UI", 9, "bold"),
         )
-        user_lbl.pack(anchor="w", padx=12, pady=(12, 4))
+        user_lbl.pack(anchor="w", padx=14, pady=(8, 2))
 
         self.user_list = tk.Listbox(
             left,
-            bg="#18191a",
-            fg="#e4e6eb",
+            bg="#ffffff",
+            fg="#111",
             bd=0,
             highlightthickness=0,
             activestyle="dotbox",
-            font=("Segoe UI", 10),
+            font=("Segoe UI", 9),
         )
-        self.user_list.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.user_list.pack(fill="both", expand=True, padx=12, pady=(0, 10))
         self.user_list.bind("<Double-Button-1>", self.start_private_chat)
 
-        # ========== RIGHT: CHAT AREA ==========
-        right = tk.Frame(self.root, bg="#18191a")
-        right.grid(row=0, column=1, sticky="nsew")
-        right.grid_rowconfigure(1, weight=1)
-        right.grid_columnconfigure(0, weight=1)
+        # ========== CENTER: CHAT AREA ==========
+        center = tk.Frame(self.root, bg="#dfe3ee")
+        center.grid(row=0, column=1, sticky="nsew")
+        center.grid_rowconfigure(1, weight=1)
+        center.grid_columnconfigure(0, weight=1)
 
         # header
-        header = tk.Frame(right, bg="#242526", height=52)
+        header = tk.Frame(center, bg="#ffffff", height=52)
         header.grid(row=0, column=0, sticky="new")
         header.grid_propagate(False)
 
         self.username_label = tk.Label(
             header,
             text="Chưa đăng nhập",
-            bg="#242526",
-            fg="#e4e6eb",
+            bg="#ffffff",
+            fg="#111",
             font=("Segoe UI", 11, "bold"),
         )
         self.username_label.pack(side="left", padx=12)
@@ -459,35 +461,35 @@ class ClientGUI:
         self.roomname_label = tk.Label(
             header,
             text="Phòng: Phòng chung",
-            bg="#242526",
-            fg="#b0b3b8",
-            font=("Segoe UI", 10),
+            bg="#ffffff",
+            fg="#555",
+            font=("Segoe UI", 9),
         )
         self.roomname_label.pack(side="left", padx=10)
 
         self.admin_label = tk.Label(
             header,
             text="",
-            bg="#242526",
-            fg="#ffb020",
-            font=("Segoe UI", 10, "bold"),
+            bg="#ffffff",
+            fg="#e67e22",
+            font=("Segoe UI", 9, "bold"),
         )
         self.admin_label.pack(side="left", padx=4)
 
         self.manage_btn = tk.Button(
             header,
-            text="⚙ Quản lý phòng",
+            text="⚙ QTV",
             command=self.open_room_admin_menu,
-            bg="#3a3b3c",
-            fg="#e4e6eb",
+            bg="#ecf0f1",
+            fg="#111",
             relief="flat",
-            font=("Segoe UI", 9),
+            font=("Segoe UI", 8),
         )
         self.manage_btn.pack(side="right", padx=8)
         self.manage_btn.config(state="disabled")
 
-        # khung chat
-        chat_frame = tk.Frame(right, bg="#18191a")
+        # khung chat (dạng text + bubble màu)
+        chat_frame = tk.Frame(center, bg="#dfe3ee")
         chat_frame.grid(row=1, column=0, sticky="nsew")
         chat_frame.grid_rowconfigure(0, weight=1)
         chat_frame.grid_columnconfigure(0, weight=1)
@@ -495,9 +497,9 @@ class ClientGUI:
         self.chat_text = scrolledtext.ScrolledText(
             chat_frame,
             wrap="word",
-            bg="#18191a",
-            fg="#e4e6eb",
-            insertbackground="#e4e6eb",
+            bg="#dfe3ee",
+            fg="#111",
+            insertbackground="#111",
             font=("Segoe UI", 10),
             bd=0,
             highlightthickness=0,
@@ -505,55 +507,100 @@ class ClientGUI:
         self.chat_text.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
         self.chat_text.config(state="disabled")
 
-        # màu chat
-        self.chat_text.tag_config("self", foreground="#9ab4ff")
-        self.chat_text.tag_config("other", foreground="#ffffff")
-        self.chat_text.tag_config("server", foreground="#ffdd57")
-        self.chat_text.tag_config("pm", foreground="#ff79c6")
-        self.chat_text.tag_config("error", foreground="#ff6b6b")
-        self.chat_text.tag_config("system", foreground="#aaaaaa")
-        self.chat_text.tag_config("history", foreground="#8be9fd")
+        # style "bubble"
+        self.chat_text.tag_config("self", foreground="#ffffff", background="#9b59b6",
+                                  spacing1=4, spacing3=4, lmargin1=200, lmargin2=200,
+                                  rmargin=8, justify="right")
+        self.chat_text.tag_config("other", foreground="#111", background="#ffffff",
+                                  spacing1=4, spacing3=4, lmargin1=8, lmargin2=8,
+                                  rmargin=200, justify="left")
+        self.chat_text.tag_config("server", foreground="#2c3e50", background="#f9e79f",
+                                  spacing1=4, spacing3=4, lmargin1=60, lmargin2=60,
+                                  rmargin=60, justify="center")
+        self.chat_text.tag_config("pm", foreground="#ffffff", background="#e84393",
+                                  spacing1=4, spacing3=4, lmargin1=120, lmargin2=120,
+                                  rmargin=120, justify="center")
+        self.chat_text.tag_config("error", foreground="#c0392b")
+        self.chat_text.tag_config("system", foreground="#7f8c8d")
+        self.chat_text.tag_config("history", foreground="#2980b9")
 
         # input
-        input_frame = tk.Frame(right, bg="#242526", height=60)
+        input_frame = tk.Frame(center, bg="#ffffff", height=70)
         input_frame.grid(row=2, column=0, sticky="sew")
         input_frame.grid_propagate(False)
         input_frame.grid_columnconfigure(0, weight=1)
 
         self.message_entry = tk.Entry(
             input_frame,
-            bg="#3a3b3c",
-            fg="#e4e6eb",
+            bg="#f0f2f5",
+            fg="#111",
             font=("Segoe UI", 11),
             relief="flat",
-            insertbackground="#e4e6eb",
+            insertbackground="#111",
         )
-        self.message_entry.grid(row=0, column=0, sticky="ew", padx=(10, 4), pady=10)
+        self.message_entry.grid(row=0, column=0, sticky="ew", padx=(10, 4), pady=14)
         self.message_entry.bind("<Return>", self.send_message)
 
         send_btn = tk.Button(
             input_frame,
             text="Gửi",
             command=self.send_message,
-            bg="#0084ff",
+            bg="#9b59b6",
             fg="white",
             relief="flat",
             font=("Segoe UI", 10, "bold"),
             padx=14,
         )
-        send_btn.grid(row=0, column=1, padx=(0, 4), pady=10)
+        send_btn.grid(row=0, column=1, padx=(0, 4), pady=14)
 
         img_btn = tk.Button(
             input_frame,
             text="📎",
             command=self.send_image,
-            bg="#3a3b3c",
-            fg="#e4e6eb",
+            bg="#ecf0f1",
+            fg="#111",
             relief="flat",
             font=("Segoe UI", 11),
             width=3,
         )
-        img_btn.grid(row=0, column=2, padx=(0, 10), pady=10)
+        img_btn.grid(row=0, column=2, padx=(0, 10), pady=14)
+
+        # ========== RIGHT: INFO PANEL (avatar + welcome) ==========
+        right = tk.Frame(self.root, bg="#f0f2f5", width=220)
+        right.grid(row=0, column=2, sticky="nse")
+        right.grid_propagate(False)
+
+        # avatar tròn đơn giản (dùng emoji mèo)
+        avatar_frame = tk.Frame(right, bg="#f0f2f5")
+        avatar_frame.pack(pady=(40, 10), fill="x")
+        avatar_label = tk.Label(
+            avatar_frame,
+            text="😺",
+            bg="#9b59b6",
+            fg="white",
+            font=("Segoe UI", 36, "bold"),
+            width=4,
+            height=2,
+        )
+        avatar_label.pack()
+
+        self.welcome_label = tk.Label(
+            right,
+            text="Welcome!",
+            bg="#f0f2f5",
+            fg="#111",
+            font=("Segoe UI", 11, "bold"),
+        )
+        self.welcome_label.pack(pady=(8, 2))
+
+        self.status_label = tk.Label(
+            right,
+            text="Đang kết nối...",
+            bg="#f0f2f5",
+            fg="#555",
+            font=("Segoe UI", 9),
+        )
+        self.status_label.pack()
 
     # ---------- LOGIN ----------
     def do_login(self):
@@ -574,6 +621,8 @@ class ClientGUI:
             return
 
         self.username_label.config(text=user)
+        self.welcome_label.config(text=f"Welcome {user}!")
+        self.status_label.config(text="Đang online")
         self.client.message_callback = self.display_message
         self.client.user_list_callback = self.update_user_list
         self.client.room_list_callback = self.update_room_list
@@ -583,7 +632,8 @@ class ClientGUI:
     # ---------- CALLBACK TỪ CLIENT ----------
     def display_message(self, text, tag="other"):
         self.chat_text.config(state="normal")
-        self.chat_text.insert("end", text, tag)
+        # chuyển text thành "bubble": thêm khoảng trắng để tách
+        self.chat_text.insert("end", " " + text.strip() + " \n", tag)
         self.chat_text.config(state="disabled")
         self.chat_text.see("end")
 
@@ -621,8 +671,8 @@ class ClientGUI:
             self.manage_btn.config(state="disabled")
 
     def on_chat_event(self, kind: str, name: str, preview: str, is_outgoing: bool):
-        # hiện tại chỉ dùng cho việc future nếu muốn hiển thị danh sách cuộc trò chuyện
-        # (giữ đơn giản, chưa phải implement full thread list)
+        # Hiện tại mình dùng main chat_text cho tất cả,
+        # nên event chỉ để về sau làm danh sách đoạn chat.
         pass
 
     # ---------- ACTIONS ----------
@@ -673,6 +723,7 @@ class ClientGUI:
         msg = self.message_entry.get().strip()
         if not msg:
             return
+        # gửi tới phòng hiện tại
         self.client.send_chat(msg, room=self.current_room)
         self.message_entry.delete(0, "end")
 
@@ -722,14 +773,14 @@ class ClientGUI:
 
         menu = tk.Toplevel(self.root)
         menu.title("Quản lý phòng (QTV)")
-        menu.configure(bg="#242526")
+        menu.configure(bg="#f0f2f5")
         menu.resizable(False, False)
 
         tk.Label(
             menu,
             text=f"Phòng: {self.current_room}",
-            bg="#242526",
-            fg="#e4e6eb",
+            bg="#f0f2f5",
+            fg="#111",
             font=("Segoe UI", 11, "bold"),
         ).pack(padx=12, pady=(10, 6))
 
@@ -769,8 +820,8 @@ class ClientGUI:
             menu,
             text="Đổi tên phòng",
             command=do_rename,
-            bg="#3a3b3c",
-            fg="#e4e6eb",
+            bg="#9b59b6",
+            fg="white",
             relief="flat",
             font=("Segoe UI", 10),
             width=22,
@@ -781,8 +832,8 @@ class ClientGUI:
             menu,
             text="Đặt / đổi mật khẩu",
             command=do_change_pw,
-            bg="#3a3b3c",
-            fg="#e4e6eb",
+            bg="#9b59b6",
+            fg="white",
             relief="flat",
             font=("Segoe UI", 10),
             width=22,
@@ -793,8 +844,8 @@ class ClientGUI:
             menu,
             text="Kick thành viên",
             command=do_kick,
-            bg="#3a3b3c",
-            fg="#e4e6eb",
+            bg="#e74c3c",
+            fg="white",
             relief="flat",
             font=("Segoe UI", 10),
             width=22,
@@ -805,8 +856,8 @@ class ClientGUI:
             menu,
             text="Đóng",
             command=menu.destroy,
-            bg="#3a3b3c",
-            fg="#e4e6eb",
+            bg="#bdc3c7",
+            fg="#111",
             relief="flat",
             font=("Segoe UI", 10),
             width=22,
