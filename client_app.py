@@ -34,6 +34,8 @@ class ChatClient:
         self.room_joined_callback = None    # (room, creator, is_admin)
         self.image_callback = None          # (data)
         self.chat_event_callback = None     # (kind, name, preview, is_outgoing)
+        self.history_callback = None        # (room, entries)
+
 
     # ---------- tiện ích ----------
     def send_packet(self, data: dict) -> bool:
@@ -248,13 +250,19 @@ class ChatClient:
         elif msg_type == "history":
             room = data.get("room", "Phòng chung")
             entries = data.get("history") or data.get("data") or []
-            log(f"===== Lịch sử phòng {room} =====\n", "system")
-            for e in entries:
-                ts = e.get("timestamp", "")
-                u = e.get("username", "")
-                m = e.get("message", "")
-                log(f"[{ts}] {u}: {m}\n", "history")
-            log("===== Hết lịch sử =====\n", "system")
+            # nếu GUI có đăng ký history_callback thì giao cho GUI vẽ lại
+            if self.history_callback:
+                self.history_callback(room, entries)
+            else:
+                # fallback cũ – chỉ in text thô
+                log(f"===== Lịch sử phòng {room} =====\n", "system")
+                for e in entries:
+                    ts = e.get("timestamp", "")
+                    u = e.get("username", "")
+                    m = e.get("message", "")
+                    log(f"[{ts}] {u}: {m}\n", "history")
+                log("===== Hết lịch sử =====\n", "system")
+
 
         elif msg_type == "image":
             sender = data.get("sender", "???")
@@ -628,6 +636,8 @@ class ClientGUI:
         self.client.room_list_callback = self.update_room_list
         self.client.room_joined_callback = self.on_room_joined
         self.client.chat_event_callback = self.on_chat_event
+        self.client.history_callback = self.show_history
+
 
     # ---------- CALLBACK TỪ CLIENT ----------
     def display_message(self, text, tag="other"):
@@ -636,6 +646,45 @@ class ClientGUI:
         self.chat_text.insert("end", " " + text.strip() + " \n", tag)
         self.chat_text.config(state="disabled")
         self.chat_text.see("end")
+    
+    def show_history(self, room, entries):
+        """
+        Được gọi mỗi khi server gửi lịch sử 1 phòng.
+        Mình clear khung chat và chỉ vẽ lại tin của phòng đó.
+        """
+        # cập nhật room hiện tại nếu cần
+        self.current_room = room
+        self.roomname_label.config(text=f"Phòng: {room}")
+
+        # xoá hết nội dung cũ
+        self.chat_text.config(state="normal")
+        self.chat_text.delete("1.0", "end")
+
+        my_name = self.username_label.cget("text")
+
+        for e in entries:
+            ts = e.get("timestamp", "")
+            u = e.get("username", "")
+            m = e.get("message", "")
+
+            # nếu timestamp dạng "YYYY-MM-DD HH:MM:SS" thì lấy phần giờ
+            short_ts = ts[-8:] if len(ts) >= 8 else ts
+
+            if u == "SERVER":
+                text = f"[{short_ts}] 🔔 ({room}) {m}\n"
+                tag = "server"
+            elif u == my_name:
+                text = f"[{short_ts}] ({room}) Bạn: {m}\n"
+                tag = "self"
+            else:
+                text = f"[{short_ts}] ({room}) {u}: {m}\n"
+                tag = "other"
+
+            self.chat_text.insert("end", " " + text.strip() + " \n", tag)
+
+        self.chat_text.config(state="disabled")
+        self.chat_text.see("end")
+
 
     def update_user_list(self, users):
         self.user_list.delete(0, "end")
