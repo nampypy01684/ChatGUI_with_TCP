@@ -9,8 +9,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog, scrolledtext
 
 from login_ui import LoginDialog
-
-
 # ================== BACKEND CLIENT ==================
 class ChatClient:
     """
