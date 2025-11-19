@@ -1,311 +1,359 @@
 import socket
 import threading
 import json
-import os
 import hashlib
 from datetime import datetime
-import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
+import os
+
+USERS_FILE = "users.json"
+HISTORY_FILE = "chat_history.json"
 
 
-class ChatServer:
-    def __init__(self, host: str = "127.0.0.1", port: int = 5555):
-        self.host = host
-        self.port = port
-        self.server_socket: socket.socket | None = None
-        # {sock: {"username": str, "current_room": str | None}}
-        self.clients: dict[socket.socket, dict] = {}
-        # {room_name: {"creator": str, "password": str, "is_private": bool, "members": set[socket.socket]}}
-        self.rooms: dict[str, dict] = {}
-        self.running = False
-
-        # history
-        self.history_file = "chat_history.json"
-        self.chat_history: list[dict] = self.load_history()
-
-        # user accounts
-        self.users_file = "users.json"
-        self.users: dict[str, dict] = self.load_users()
-
-    # ---------- history ----------
-    def load_history(self) -> list:
-        if os.path.exists(self.history_file):
-            try:
-                with open(self.history_file, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return []
-        return []
-
-    def save_history(self) -> None:
-        try:
-            with open(self.history_file, "w", encoding="utf-8") as f:
-                json.dump(self.chat_history[-1000:], f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print("Lỗi lưu lịch sử:", e)
-
-    def add_to_history(self, username: str, message: str, room: str = "Phòng chung") -> None:
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.chat_history.append({
-            "timestamp": ts,
-            "username": username,
-            "message": message,
-            "room": room,
-        })
-        self.save_history()
-
-    # ---------- users ----------
-    def load_users(self) -> dict:
-        if os.path.exists(self.users_file):
-            try:
-                with open(self.users_file, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
+# ===================== UTILS =====================
+def load_users():
+    if not os.path.exists(USERS_FILE):
+        return {}
+    try:
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
         return {}
 
-    def save_users(self) -> None:
-        try:
-            with open(self.users_file, "w", encoding="utf-8") as f:
-                json.dump(self.users, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print("Lỗi lưu users:", e)
 
-    @staticmethod
-    def hash_password(password: str) -> str:
-        return hashlib.sha256(password.encode("utf-8")).hexdigest()
+def save_users(db):
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(db, f, ensure_ascii=False, indent=2)
 
-    # ---------- utilities ----------
-    def send_json(self, sock: socket.socket, data: dict) -> None:
-        try:
-            payload = json.dumps(data) + "\n"
-            sock.sendall(payload.encode("utf-8"))
-        except Exception:
-            pass
 
-    def ensure_default_room(self) -> None:
-        if "Phòng chung" not in self.rooms:
-            self.rooms["Phòng chung"] = {
+def hash_pw(pw: str):
+    return hashlib.sha256(pw.encode("utf-8")).hexdigest()
+
+
+def load_history():
+    if not os.path.exists(HISTORY_FILE):
+        return []
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            hist = json.load(f)
+    except:
+        return []
+
+    for e in hist:
+        if isinstance(e, dict) and "room" not in e:
+            e["room"] = "Phòng chung"
+
+    return hist
+
+
+def save_history(hist):
+    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(hist[-1000:], f, ensure_ascii=False, indent=2)
+
+
+# ===================== SERVER =====================
+class ChatServer:
+    def __init__(self, host="127.0.0.1", port=5555):
+        self.host = host
+        self.port = port
+
+        self.users = load_users()
+        self.history = load_history()
+
+        self.server_socket = None
+        self.clients = {}  # sock -> {"username":..., "room":...}
+
+        self.rooms = {
+            "Phòng chung": {
                 "creator": "SERVER",
                 "password": "",
                 "is_private": False,
                 "members": set(),
             }
+        }
 
-    def broadcast_user_list(self) -> None:
-        users = []
-        for info in self.clients.values():
-            name = info.get("username")
-            if name and name not in users:
-                users.append(name)
-        data = {"type": "user_list", "users": users}
+    # ------------------ SEND ------------------
+    def send(self, sock, data: dict):
+        try:
+            payload = json.dumps(data) + "\n"
+            sock.sendall(payload.encode("utf-8"))
+        except:
+            pass
+
+    def broadcast_all(self, data: dict):
         payload = json.dumps(data) + "\n"
-        disconnected = []
-        for sock in list(self.clients.keys()):
+        dead = []
+        for s in list(self.clients.keys()):
             try:
-                sock.sendall(payload.encode("utf-8"))
-            except Exception:
-                disconnected.append(sock)
-        for sock in disconnected:
-            self.remove_client(sock)
+                s.sendall(payload.encode("utf-8"))
+            except:
+                dead.append(s)
+        for ds in dead:
+            self.remove_client(ds)
 
-    def broadcast_room_list(self) -> None:
-        rooms = list(self.rooms.keys())
-        data = {"type": "room_list", "rooms": rooms}
-        payload = json.dumps(data) + "\n"
-        disconnected = []
-        for sock in list(self.clients.keys()):
-            try:
-                sock.sendall(payload.encode("utf-8"))
-            except Exception:
-                disconnected.append(sock)
-        for sock in disconnected:
-            self.remove_client(sock)
+    def broadcast_user_list(self):
+        lst = [info["username"] for info in self.clients.values()]
+        self.broadcast_all({"type": "user_list", "users": lst})
 
-    def broadcast_room_message(self, room: str, sender: str, message: str) -> None:
-        if room not in self.rooms:
-            return
-        data = {
-            "type": "chat",
-            "sender": sender,
-            "message": message,
-            "timestamp": datetime.now().strftime("%H:%M:%S"),
+    def send_room_list(self):
+        arr = []
+        for name, info in self.rooms.items():
+            arr.append({
+                "name": name,
+                "creator": info["creator"],
+                "is_private": info["is_private"],
+                "members_count": len(info["members"]),
+            })
+        self.broadcast_all({"type": "room_list", "rooms": arr})
+
+    # ------------------ HISTORY ------------------
+    def add_history(self, user, msg, room):
+        entry = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "username": user,
+            "message": msg,
             "room": room,
         }
-        payload = json.dumps(data) + "\n"
-        disconnected = []
-        for sock in list(self.rooms[room]["members"]):
-            try:
-                sock.sendall(payload.encode("utf-8"))
-            except Exception:
-                disconnected.append(sock)
-        for sock in disconnected:
-            self.remove_client(sock)
+        self.history.append(entry)
+        save_history(self.history)
 
-    def add_client_to_room(self, sock: socket.socket, room: str) -> None:
-        self.ensure_default_room()
+    # ------------------ ROOM ------------------
+    def broadcast_room(self, room_name, sender, message, mtype="chat"):
+        if room_name not in self.rooms:
+            return
+
+        packet = {
+            "type": mtype,
+            "sender": sender,
+            "message": message,
+            "room": room_name,
+            "timestamp": datetime.now().strftime("%H:%M:%S"),
+        }
+
+        payload = json.dumps(packet) + "\n"
+
+        dead = []
+        for s in list(self.rooms[room_name]["members"]):
+            try:
+                s.sendall(payload.encode("utf-8"))
+            except:
+                dead.append(s)
+
+        for ds in dead:
+            self.remove_client(ds)
+
+    def join_room(self, sock, room_name, password=""):
         info = self.clients.get(sock)
         if not info:
             return
-        old_room = info.get("current_room")
-        if old_room and old_room in self.rooms:
-            self.rooms[old_room]["members"].discard(sock)
 
-        if room not in self.rooms:
-            self.rooms[room] = {
-                "creator": info["username"],
+        username = info["username"]
+
+        if room_name not in self.rooms:
+            self.rooms[room_name] = {
+                "creator": username,
                 "password": "",
                 "is_private": False,
                 "members": set(),
             }
-        self.rooms[room]["members"].add(sock)
-        info["current_room"] = room
 
-        # gửi lịch sử cho phòng đó
-        history = [h for h in self.chat_history if h.get("room") == room][-50:]
-        self.send_json(sock, {"type": "history", "room": room, "history": history})
+        room = self.rooms[room_name]
 
-        msg = f"{info['username']} đã tham gia phòng {room}."
-        self.broadcast_room_message(room, "SERVER", msg)
-        self.add_to_history("SERVER", msg, room)
-        self.broadcast_room_list()
+        if room["is_private"] and room["password"] != password:
+            self.send(sock, {"type": "error", "message": "Sai mật khẩu phòng."})
+            return
 
-    def remove_client(self, sock: socket.socket) -> None:
-        info = self.clients.pop(sock, None)
-        if info:
-            username = info.get("username", "???")
-            room = info.get("current_room")
-            if room and room in self.rooms:
-                self.rooms[room]["members"].discard(sock)
-                msg = f"{username} đã rời khỏi phòng {room}."
-                self.broadcast_room_message(room, "SERVER", msg)
-                self.add_to_history("SERVER", msg, room)
+        # rời phòng cũ
+        old = info["room"]
+        if old and old in self.rooms:
+            self.rooms[old]["members"].discard(sock)
+
+        # vào phòng mới
+        room["members"].add(sock)
+        info["room"] = room_name
+
+        # gửi history
+        hh = [e for e in self.history if e["room"] == room_name][-50:]
+        self.send(sock, {"type": "history", "room": room_name, "history": hh})
+
+        # thông báo join
+        msg = f"{username} đã tham gia phòng {room_name}!"
+        self.broadcast_room(room_name, "SERVER", msg)
+        self.add_history("SERVER", msg, room_name)
+
+        # gửi thông tin phòng
+        self.send(sock, {
+            "type": "room_joined",
+            "room": room_name,
+            "creator": room["creator"],
+            "is_admin": (username == room["creator"])
+        })
+
+        self.send_room_list()
+
+    # ------------------ AUTH ------------------
+    def handle_auth(self, sock):
         try:
-            sock.close()
-        except Exception:
-            pass
-        self.broadcast_user_list()
-        self.broadcast_room_list()
+            raw = sock.recv(4096).decode("utf-8")
+            line = raw.split("\n", 1)[0]
+            p = json.loads(line)
+        except:
+            return None
 
-    # ---------- server loop ----------
-    def start_server(self, log_cb) -> bool:
-        try:
-            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.server_socket.bind((self.host, self.port))
-            self.server_socket.listen(5)
-            self.running = True
-            self.ensure_default_room()
-            log_cb(f"[SERVER] Đang chạy trên {self.host}:{self.port}\n")
+        if p.get("type") != "auth":
+            self.send(sock, {"type": "error", "message": "Auth lỗi."})
+            return None
 
-            threading.Thread(
-                target=self.accept_loop, args=(log_cb,), daemon=True
-            ).start()
-            return True
-        except Exception as e:
-            log_cb(f"[LỖI] Không thể khởi động server: {e}\n")
-            return False
+        username = p.get("username")
+        password = p.get("password")
+        action = p.get("action")
+        if not username or not password:
+            self.send(sock, {"type": "error", "message": "Thiếu thông tin."})
+            return None
 
-    def stop_server(self):
-        self.running = False
-        if self.server_socket:
+        pw_hash = hash_pw(password)
+
+        if action == "register":
+            if username in self.users:
+                self.send(sock, {"type": "error", "message": "Tên đã tồn tại."})
+                return None
+            self.users[username] = {"password": pw_hash, "avatar": None}
+            save_users(self.users)
+
+        elif action == "login":
+            if username not in self.users:
+                self.send(sock, {"type": "error", "message": "Không có tài khoản."})
+                return None
+            if self.users[username]["password"] != pw_hash:
+                self.send(sock, {"type": "error", "message": "Sai mật khẩu."})
+                return None
+
+        self.send(sock, {"type": "auth_ok", "username": username})
+        return username
+
+    # ------------------ PACKET PROCESS ------------------
+    def process_packet(self, sock, data):
+        msg_type = data.get("type")
+        info = self.clients.get(sock)
+        if not info:
+            return
+
+        user = info["username"]
+        room = info["room"]
+
+        # CHAT
+        if msg_type == "chat":
+            msg = data.get("message", "")
+            self.broadcast_room(room, user, msg)
+            self.add_history(user, msg, room)
+
+        # PM
+        elif msg_type == "private":
+            to = data.get("to")
+            msg = data.get("message", "")
+            for s, inf in self.clients.items():
+                if inf["username"] == to:
+                    self.send(s, {
+                        "type": "private",
+                        "sender": user,
+                        "recipient": to,
+                        "message": msg,
+                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    })
+                    self.send(sock, {
+                        "type": "private",
+                        "sender": user,
+                        "recipient": to,
+                        "message": msg,
+                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    })
+                    break
+
+        # JOIN ROOM
+        elif msg_type == "join_room":
+            self.join_room(sock, data.get("room", ""), data.get("password", ""))
+
+        # CREATE ROOM
+        elif msg_type == "create_room":
+            name = data.get("room")
+            pw = data.get("password", "")
+            self.rooms[name] = {
+                "creator": user,
+                "password": pw,
+                "is_private": pw != "",
+                "members": set()
+            }
+            self.send_room_list()
+
+        # IMAGE
+        elif msg_type == "image":
+            filename = data.get("filename")
+            b64 = data.get("data")
+            caption = data.get("caption", "")
+
+            img_packet = {
+                "type": "image",
+                "sender": user,
+                "room": room,
+                "filename": filename,
+                "data": b64,
+                "caption": caption,
+                "timestamp": datetime.now().strftime("%H:%M:%S"),
+            }
+
+            # thông báo (dạng tin nhắn text)
+            self.broadcast_room(room, user, f"[ảnh] {filename}")
+
+            # gửi file thật
+            for s in self.rooms[room]["members"]:
+                self.send(s, img_packet)
+
+            self.add_history(user, f"[ảnh] {filename}", room)
+
+    # ------------------ HANDLE CLIENT ------------------
+    def handle_client(self, sock, addr):
+        username = self.handle_auth(sock)
+        if not username:
             try:
-                self.server_socket.close()
-            except Exception:
-                pass
-            self.server_socket = None
-        for sock in list(self.clients.keys()):
-            self.remove_client(sock)
-
-    def accept_loop(self, log_cb):
-        while self.running:
-            try:
-                client_sock, addr = self.server_socket.accept()
-                log_cb(f"[CONNECT] {addr}\n")
-                threading.Thread(
-                    target=self.handle_client, args=(client_sock, addr, log_cb), daemon=True
-                ).start()
-            except Exception:
-                break
-
-    # ---------- auth + handling client ----------
-    def handle_client(self, sock: socket.socket, addr, log_cb):
-        username = None
-        try:
-            # bước 1: nhận gói auth đầu tiên
-            first = sock.recv(4096).decode("utf-8").strip()
-            if not first:
                 sock.close()
-                return
-            try:
-                packet = json.loads(first)
-            except json.JSONDecodeError:
-                packet = None
+            except:
+                pass
+            return
 
-            if isinstance(packet, dict) and packet.get("type") == "auth":
-                action = packet.get("action", "login")
-                username = (packet.get("username") or "").strip()
-                password = packet.get("password") or ""
-                if not username:
-                    username = f"user-{addr[1]}"
+        print(f"[SERVER] {username} connected")
 
-                if action == "register":
-                    if username in self.users:
-                        self.send_json(sock, {
-                            "type": "error",
-                            "message": "Username đã tồn tại."
-                        })
-                        sock.close()
-                        return
-                    self.users[username] = {
-                        "password": self.hash_password(password),
-                        "avatar": None,
-                    }
-                    self.save_users()
-                else:  # login
-                    if username not in self.users:
-                        self.send_json(sock, {
-                            "type": "error",
-                            "message": "Tài khoản không tồn tại."
-                        })
-                        sock.close()
-                        return
-                    if self.users[username]["password"] != self.hash_password(password):
-                        self.send_json(sock, {
-                            "type": "error",
-                            "message": "Sai mật khẩu."
-                        })
-                        sock.close()
-                        return
+        # thêm vào danh sách online
+        self.clients[sock] = {"username": username, "room": "Phòng chung"}
+        self.rooms["Phòng chung"]["members"].add(sock)
 
-                # ok
-                self.clients[sock] = {"username": username, "current_room": None}
-                log_cb(f"[JOIN] {username} (auth) từ {addr}\n")
-                avatar_b64 = self.users[username].get("avatar")
-                self.send_json(sock, {
-                    "type": "auth_ok",
-                    "username": username,
-                    "avatar": avatar_b64,
-                })
+        # gửi danh sách user + phòng
+        self.broadcast_user_list()
+        self.send_room_list()
 
-            else:
-                # client cũ: xem 'first' là username
-                username = first.strip() or f"user-{addr[1]}"
-                self.clients[sock] = {"username": username, "current_room": None}
-                log_cb(f"[JOIN] {username} từ {addr}\n")
-                # không gửi auth_ok (client cũ không cần)
+        # gửi lịch sử phòng chung
+        hh = [e for e in self.history if e["room"] == "Phòng chung"][-50:]
+        self.send(sock, {"type": "history", "room": "Phòng chung", "history": hh})
 
-            # sau khi login xong
-            self.broadcast_user_list()
-            self.broadcast_room_list()
-            self.add_client_to_room(sock, "Phòng chung")
+        # thông báo join
+        join_msg = f"{username} đã tham gia phòng Phòng chung!"
+        self.broadcast_room("Phòng chung", "SERVER", join_msg)
+        self.add_history("SERVER", join_msg, "Phòng chung")
 
-            buffer = ""
-            while self.running:
-                chunk = sock.recv(4096).decode("utf-8")
+        # gửi room_joined
+        self.send(sock, {
+            "type": "room_joined",
+            "room": "Phòng chung",
+            "creator": "SERVER",
+            "is_admin": False
+        })
+
+        buffer = ""
+        try:
+            while True:
+                chunk = sock.recv(4096)
                 if not chunk:
                     break
-                buffer += chunk
+                buffer += chunk.decode("utf-8")
+
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
                     line = line.strip()
@@ -313,279 +361,51 @@ class ChatServer:
                         continue
                     try:
                         data = json.loads(line)
-                    except json.JSONDecodeError:
-                        # xem như chat plain text
-                        data = {"type": "chat", "message": line}
+                    except:
+                        continue
+                    self.process_packet(sock, data)
 
-                    msg_type = data.get("type", "chat")
-                    info = self.clients.get(sock)
-                    if not info:
-                        break
-                    username = info["username"]
-                    room = info.get("current_room") or "Phòng chung"
+        except:
+            pass
 
-                    if msg_type == "chat":
-                        msg = data.get("message", "")
-                        if not msg:
-                            continue
-                        log_cb(f"[{username} @ {room}] {msg}\n")
-                        self.broadcast_room_message(room, username, msg)
-                        self.add_to_history(username, msg, room)
+        self.remove_client(sock)
 
-                    elif msg_type == "private":
-                        target_name = data.get("to")
-                        pm_text = data.get("message", "")
-                        if not target_name or not pm_text:
-                            continue
-                        target_sock = None
-                        for s2, inf2 in self.clients.items():
-                            if inf2.get("username") == target_name:
-                                target_sock = s2
-                                break
-                        if not target_sock:
-                            self.send_json(sock, {
-                                "type": "error",
-                                "message": f"Không tìm thấy người dùng '{target_name}'."
-                            })
-                            continue
-                        ts = datetime.now().strftime("%H:%M:%S")
-                        payload = {
-                            "type": "private",
-                            "sender": username,
-                            "recipient": target_name,
-                            "message": pm_text,
-                            "timestamp": ts,
-                        }
-                        self.send_json(sock, payload)
-                        self.send_json(target_sock, payload)
-                        log_cb(f"[PM] {username} -> {target_name}: {pm_text}\n")
+    # ------------------ REMOVE CLIENT ------------------
+    def remove_client(self, sock):
+        if sock not in self.clients:
+            return
 
-                    elif msg_type == "create_room":
-                        room_name = (data.get("room") or "").strip()
-                        password = data.get("password", "") or ""
-                        if not room_name:
-                            self.send_json(sock, {
-                                "type": "error",
-                                "message": "Tên phòng không được để trống."
-                            })
-                            continue
-                        if room_name in self.rooms:
-                            self.send_json(sock, {
-                                "type": "error",
-                                "message": "Phòng đã tồn tại."
-                            })
-                            continue
-                        self.rooms[room_name] = {
-                            "creator": username,
-                            "password": password,
-                            "is_private": bool(password),
-                            "members": set(),
-                        }
-                        log_cb(f"[ROOM] {username} tạo phòng {room_name}\n")
-                        self.add_client_to_room(sock, room_name)
-                        self.send_json(sock, {
-                            "type": "room_joined",
-                            "room": room_name,
-                            "creator": username,
-                            "is_admin": True,
-                        })
+        username = self.clients[sock]["username"]
+        room = self.clients[sock]["room"]
 
-                    elif msg_type == "join_room":
-                        room_name = (data.get("room") or "").strip()
-                        password = data.get("password", "") or ""
-                        if room_name not in self.rooms:
-                            self.send_json(sock, {
-                                "type": "error",
-                                "message": "Phòng không tồn tại."
-                            })
-                            continue
-                        rinfo = self.rooms[room_name]
-                        if rinfo["is_private"] and rinfo["password"]:
-                            if password != rinfo["password"]:
-                                self.send_json(sock, {
-                                    "type": "error",
-                                    "message": "Sai mật khẩu phòng."
-                                })
-                                continue
-                        self.add_client_to_room(sock, room_name)
-                        self.send_json(sock, {
-                            "type": "room_joined",
-                            "room": room_name,
-                            "creator": rinfo["creator"],
-                            "is_admin": (username == rinfo["creator"]),
-                        })
+        if room in self.rooms:
+            self.rooms[room]["members"].discard(sock)
+            msg = f"{username} đã rời phòng {room}!"
+            self.broadcast_room(room, "SERVER", msg)
+            self.add_history("SERVER", msg, room)
 
-                    elif msg_type == "get_history":
-                        room_name = data.get("room") or room
-                        history = [h for h in self.chat_history if h.get("room") == room_name][-50:]
-                        self.send_json(sock, {
-                            "type": "history",
-                            "room": room_name,
-                            "history": history,
-                        })
+        del self.clients[sock]
 
-                    elif msg_type == "update_avatar":
-                        img_b64 = data.get("image_data")
-                        if not img_b64:
-                            continue
-                        if username not in self.users:
-                            self.users[username] = {
-                                "password": "",
-                                "avatar": img_b64,
-                            }
-                        else:
-                            self.users[username]["avatar"] = img_b64
-                        self.save_users()
-                        self.send_json(sock, {
-                            "type": "avatar_updated",
-                            "message": "Avatar đã được cập nhật."
-                        })
+        try:
+            sock.close()
+        except:
+            pass
 
-                    elif msg_type == "image":
-                        img_b64 = data.get("image_data")
-                        filename = data.get("filename", "image")
-                        caption = data.get("caption", "")
-                        if not img_b64:
-                            continue
-                        ts = datetime.now().strftime("%H:%M:%S")
-                        payload = {
-                            "type": "image",
-                            "sender": username,
-                            "room": room,
-                            "timestamp": ts,
-                            "image_data": img_b64,
-                            "filename": filename,
-                            "caption": caption,
-                        }
-                        if room in self.rooms:
-                            for s2 in list(self.rooms[room]["members"]):
-                                self.send_json(s2, payload)
-                        hist_text = f"[Ảnh] {filename}"
-                        if caption:
-                            hist_text += f" - {caption}"
-                        self.add_to_history(username, hist_text, room)
+        self.broadcast_user_list()
+        self.send_room_list()
 
-                    elif msg_type == "error":
-                        # từ client gửi, ít dùng
-                        log_cb(f"[CLIENT-ERROR {username}] {data.get('message')}\n")
+    # ------------------ RUN ------------------
+    def start(self):
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.bind((self.host, self.port))
+        self.server_socket.listen(20)
 
-        except Exception as e:
-            log_cb(f"[LỖI] Lỗi kết nối với {addr}: {e}\n")
-        finally:
-            self.remove_client(sock)
+        print(f"SERVER RUNNING: {self.host}:{self.port}")
 
-
-# ================= GUI CHO SERVER =================
-
-class ServerGUI:
-    def __init__(self):
-        self.server = ChatServer()
-
-        self.root = tk.Tk()
-        self.root.title("Chat Server")
-        self.root.geometry("700x500")
-        self.root.configure(bg="#1e1e1e")
-
-        self.build_ui()
-
-    def build_ui(self):
-        top = tk.Frame(self.root, bg="#1e1e1e")
-        top.pack(fill="x", pady=5)
-
-        tk.Label(
-            top,
-            text=f"Server: {self.server.host}:{self.server.port}",
-            bg="#1e1e1e",
-            fg="white",
-            font=("Segoe UI", 11, "bold"),
-        ).pack(side="left", padx=10)
-
-        self.status_label = tk.Label(
-            top,
-            text="Trạng thái: DỪNG",
-            bg="#1e1e1e",
-            fg="#e74c3c",
-            font=("Segoe UI", 10),
-        )
-        self.status_label.pack(side="right", padx=10)
-
-        control = tk.Frame(self.root, bg="#1e1e1e")
-        control.pack(fill="x", pady=5)
-
-        self.start_btn = tk.Button(
-            control,
-            text="▶ Khởi động",
-            command=self.start_server,
-            bg="#2ecc71",
-            fg="white",
-            font=("Segoe UI", 10, "bold"),
-            relief="flat",
-            padx=20,
-        )
-        self.start_btn.pack(side="left", padx=10)
-
-        self.stop_btn = tk.Button(
-            control,
-            text="■ Dừng",
-            command=self.stop_server,
-            bg="#e74c3c",
-            fg="white",
-            font=("Segoe UI", 10, "bold"),
-            relief="flat",
-            padx=20,
-            state="disabled",
-        )
-        self.stop_btn.pack(side="left")
-
-        clear_btn = tk.Button(
-            control,
-            text="Xoá log",
-            command=self.clear_logs,
-            bg="#95a5a6",
-            fg="white",
-            font=("Segoe UI", 10),
-            relief="flat",
-            padx=10,
-        )
-        clear_btn.pack(side="right", padx=10)
-
-        self.log_text = scrolledtext.ScrolledText(
-            self.root,
-            bg="#2d3436",
-            fg="#ecf0f1",
-            font=("Consolas", 10),
-        )
-        self.log_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-
-    def log(self, text: str):
-        self.log_text.insert("end", text)
-        self.log_text.see("end")
-
-    def start_server(self):
-        if self.server.start_server(self.log):
-            self.status_label.config(text="Trạng thái: ĐANG CHẠY", fg="#2ecc71")
-            self.start_btn.config(state="disabled")
-            self.stop_btn.config(state="normal")
-
-    def stop_server(self):
-        self.server.stop_server()
-        self.status_label.config(text="Trạng thái: DỪNG", fg="#e74c3c")
-        self.start_btn.config(state="normal")
-        self.stop_btn.config(state="disabled")
-
-    def clear_logs(self):
-        self.log_text.delete("1.0", "end")
-
-    def run(self):
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.root.mainloop()
-
-    def on_close(self):
-        if messagebox.askokcancel("Thoát", "Bạn có chắc muốn thoát server?"):
-            self.server.stop_server()
-            self.root.destroy()
+        while True:
+            client_sock, addr = self.server_socket.accept()
+            threading.Thread(target=self.handle_client, args=(client_sock, addr), daemon=True).start()
 
 
 if __name__ == "__main__":
-    gui = ServerGUI()
-    gui.run()
+    ChatServer().start()
