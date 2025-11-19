@@ -9,6 +9,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog, scrolledtext
 
 from login_ui import LoginDialog
+
+
 # ================== BACKEND CLIENT ==================
 class ChatClient:
     """
@@ -620,15 +622,7 @@ class ClientGUI:
         pw = res["password"]
         action = res["action"]
 
-        ok = self.client.connect(user, pw, action, self.display_message)
-        if not ok:
-            messagebox.showerror("Login Error", "Không thể đăng nhập.")
-            self.root.destroy()
-            return
-
-        self.username_label.config(text=user)
-        self.welcome_label.config(text=f"Welcome {user}!")
-        self.status_label.config(text="Đang online")
+                # đăng ký callback TRƯỚC khi connect
         self.client.message_callback = self.display_message
         self.client.user_list_callback = self.update_user_list
         self.client.room_list_callback = self.update_room_list
@@ -636,6 +630,16 @@ class ClientGUI:
         self.client.chat_event_callback = self.on_chat_event
         self.client.history_callback = self.show_history
 
+        ok = self.client.connect(user, pw, action, self.display_message)
+        if not ok:
+            messagebox.showerror("Login Error", "Không thể đăng nhập.")
+            self.root.destroy()
+            return
+
+        # login xong mới cập nhật giao diện
+        self.username_label.config(text=user)
+        self.welcome_label.config(text=f"Welcome {user}!")
+        self.status_label.config(text="Đang online")
 
     # ---------- CALLBACK TỪ CLIENT ----------
     def display_message(self, text, tag="other"):
