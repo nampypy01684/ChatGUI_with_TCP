@@ -270,9 +270,32 @@ class ClientGUI:
 
     # ---------- UI ----------
     def build_layout(self):
-        # Layout giống bản cũ của bạn
+
+        # ----- FIX LỖI CHAT BỊ TRÀN SANG PHẢI -----
         self.root.grid_rowconfigure(0, weight=1)
-        self.root.grid_columnconfigure(1, weight=1)
+        self.root.grid_columnconfigure(0, weight=0)  
+        self.root.grid_columnconfigure(1, weight=1)  
+
+        # LEFT SIDEBAR
+        left = tk.Frame(self.root, bg="#f0f2f5", width=260)
+        left.grid(row=0, column=0, sticky="nsw")
+        left.grid_propagate(False)
+
+        # CENTER
+        center = tk.Frame(self.root, bg="#dfe3ee")
+        center.grid(row=0, column=1, sticky="nsew")
+
+        # ====== FIX QUAN TRỌNG ======
+        center.grid_rowconfigure(1, weight=1)
+        center.grid_columnconfigure(0, weight=1)
+        # ============================
+
+        header = tk.Frame(center, bg="#ffffff", height=50)
+        header.grid(row=0, column=0, sticky="new")
+        header.grid_propagate(False)
+
+        self.chat_text = scrolledtext.ScrolledText(center, wrap="word", bg="#dfe3ee")
+        self.chat_text.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
 
         # LEFT SIDEBAR
         left = tk.Frame(self.root, bg="#f0f2f5", width=260)
@@ -323,15 +346,52 @@ class ClientGUI:
         self.chat_text.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
         self.chat_text.config(state="disabled")
 
-        self.chat_text.tag_config("self", foreground="white", background="#9b59b6",
-                                  justify="right")
-        self.chat_text.tag_config("other", background="white", justify="left")
-        self.chat_text.tag_config("server", background="#f9e79f", justify="center")
-        self.chat_text.tag_config("pm", background="#e84393", foreground="white")
-        self.chat_text.tag_config("error", foreground="red")
-        self.chat_text.tag_config("system", foreground="gray")
-        self.chat_text.tag_config("history", foreground="blue")
+        self.chat_text.tag_config("self",
+            foreground="white",
+            background="#9b59b6",
+            justify="right",
+            spacing1=4, spacing3=4,
+            lmargin1=80, lmargin2=80,
+            rmargin=10
+        )
 
+        self.chat_text.tag_config("other",
+            foreground="#111",
+            background="#ffffff",
+            justify="left",
+            spacing1=4, spacing3=4,
+            lmargin1=10, lmargin2=10,
+            rmargin=80
+        )
+
+        self.chat_text.tag_config("server",
+            foreground="#2c3e50",
+            background="#f9e79f",
+            justify="left",
+            spacing1=4, spacing3=4,
+            lmargin1=10, lmargin2=10,
+            rmargin=10
+        )
+
+        self.chat_text.tag_config("pm",
+            foreground="white",
+            background="#e84393",
+            justify="left",
+            spacing1=4, spacing3=4,
+            lmargin1=40, lmargin2=40,
+            rmargin=40
+        )
+
+        self.chat_text.tag_config("img_text",
+            foreground="#555",
+            background="#ffffff",
+            justify="left",
+            lmargin1=10,
+            lmargin2=10,
+            rmargin=10
+        )
+
+   
         # input
         input_frame = tk.Frame(center, bg="white", height=70)
         input_frame.grid(row=2, column=0, sticky="ew")
@@ -412,9 +472,6 @@ class ClientGUI:
 
     # ========== HIỂN THỊ ẢNH ==========
     def show_image(self, data):
-        """
-        Hiển thị ảnh dạng thumbnail trong chat.
-        """
         try:
             b64 = data.get("data")
             filename = data.get("filename", "")
@@ -424,23 +481,27 @@ class ClientGUI:
 
             raw = base64.b64decode(b64)
             img = Image.open(io.BytesIO(raw))
-            img.thumbnail((220, 220))
-
+            img.thumbnail((240, 240))
             tk_img = ImageTk.PhotoImage(img)
             self._img_refs.append(tk_img)
 
             self.chat_text.config(state="normal")
 
+            # prefix text dùng tag riêng để không phá layout bubble
             if sender == self.username_label.cget("text"):
-                prefix = f"[{ts}] ({room}) Bạn gửi ảnh: {filename}\n"
-                tag = "self"
+                prefix = f"[{ts}] ({room}) Bạn gửi ảnh: {filename}"
             else:
-                prefix = f"[{ts}] ({room}) {sender} gửi ảnh: {filename}\n"
-                tag = "other"
+                prefix = f"[{ts}] ({room}) {sender} gửi ảnh: {filename}"
 
-            self.chat_text.insert("end", prefix, tag)
-            self.chat_text.image_create("end", image=tk_img)
-            self.chat_text.insert("end", "\n\n")
+            self.chat_text.insert("end", prefix + "\n", "img_text")
+
+            # ---------- FIX QUAN TRỌNG ----------
+            # TÁCH ẢNH RA KHỎI CƠ CHẾ WRAP / JUSTIFY CỦA TAG TRƯỚC ĐÓ
+            self.chat_text.insert("end", "\n", "img_text")
+            self.chat_text.window_create("end",
+                                        window=tk.Label(self.chat_text, image=tk_img, bg="#ffffff"))
+            self.chat_text.insert("end", "\n\n", "img_text")
+            # -------------------------------------
 
             self.chat_text.config(state="disabled")
             self.chat_text.see("end")
