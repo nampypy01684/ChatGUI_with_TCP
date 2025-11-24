@@ -196,7 +196,6 @@ class ChatClient:
 
             if self.chat_event_callback:
                 self.chat_event_callback("room", room, message, sender == self.username)
-
         # --- PM ---
         elif msg_type == "private":
             sender = data.get("sender", "???")
@@ -235,12 +234,10 @@ class ChatClient:
             is_admin = data.get("is_admin", False)
             if self.room_joined_callback:
                 self.room_joined_callback(room, creator, is_admin)
-
         elif msg_type == "admin_kicked":
             msg = data.get("message", "")
             log(f"[SYSTEM] {msg}\n", "error")
             messagebox.showwarning("Bị kick khỏi phòng", msg)
-
         elif msg_type == "error":
             msg = data.get("message", "Lỗi không xác định.")
             log(f"[LỖI] {msg}\n", "error")
