@@ -429,8 +429,8 @@ class ClientGUI:
 
         ok = self.client.connect(user, pw, action, self.display_message)
         if not ok:
-            messagebox.showerror("Login Error", "Không thể đăng nhập.")
-            self.root.destroy()
+            messagebox.showerror("Lỗi đăng nhập", "Sai thông tin hoặc không thỏa điều kiện.\nVui lòng đăng ký lại.")
+            self.do_login()   # mở lại form đăng nhập
             return
 
         self.username_label.config(text=user)
