@@ -25,13 +25,17 @@ class LoginDialog:
         self.password_entry.pack(fill="x", padx=16)
 
         # radio login / register
+        def on_action_change(*args):
+            if self.action_var.get() == "register":
+                self.show_requirements()
+
         self.action_var = tk.StringVar(value="login")
-        frame_radio = tk.Frame(self.top, bg="#f0f0f0")
-        frame_radio.pack(anchor="w", padx=16, pady=(10, 4))
+        self.action_var.trace("w", on_action_change)
         ttk.Radiobutton(frame_radio, text="Đăng nhập", value="login",
                         variable=self.action_var).pack(side="left")
         ttk.Radiobutton(frame_radio, text="Đăng ký", value="register",
                         variable=self.action_var).pack(side="left", padx=(10, 0))
+
 
         # buttons
         btn_frame = tk.Frame(self.top, bg="#f0f0f0")
