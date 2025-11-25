@@ -432,7 +432,6 @@ class ClientGUI:
             messagebox.showerror("Lỗi đăng nhập", "Sai thông tin hoặc không thỏa điều kiện.\nVui lòng đăng ký lại.")
             self.do_login()   # mở lại form đăng nhập
             return
-
         self.username_label.config(text=user)
 
     # ---------- CALLBACK ----------
