@@ -24,18 +24,40 @@ class LoginDialog:
         self.password_entry = ttk.Entry(self.top, show="*")
         self.password_entry.pack(fill="x", padx=16)
 
-        # radio login / register
+    # radio login / register
+        self.action_var = tk.StringVar(value="login")
+
+        # ====== HÀM HIỆN BẢNG ĐIỀU KIỆN ======
+        def show_requirements():
+            from tkinter import messagebox as mb
+            mb.showinfo(
+                "Điều kiện đăng ký",
+                "- Username ≥ 3 ký tự\n"
+                "- Username chỉ gồm chữ và số (A-Z, 0-9)\n"
+                "- Mật khẩu ≥ 6 ký tự\n"
+                "- Không được bỏ trống tài khoản hoặc mật khẩu"
+            )
+
+        # ====== CALLBACK KHI CHUYỂN LOGIN <-> REGISTER ======
         def on_action_change(*args):
             if self.action_var.get() == "register":
-                self.show_requirements()
+                show_requirements()
 
-        self.action_var = tk.StringVar(value="login")
         self.action_var.trace("w", on_action_change)
-        ttk.Radiobutton(frame_radio, text="Đăng nhập", value="login",
-                        variable=self.action_var).pack(side="left")
-        ttk.Radiobutton(frame_radio, text="Đăng ký", value="register",
-                        variable=self.action_var).pack(side="left", padx=(10, 0))
 
+        # ====== FRAME RADIO ======
+        frame_radio = tk.Frame(self.top, bg="#f0f0f0")
+        frame_radio.pack(anchor="w", padx=16, pady=(10, 4))
+
+        ttk.Radiobutton(
+            frame_radio, text="Đăng nhập",
+            value="login", variable=self.action_var
+        ).pack(side="left")
+
+        ttk.Radiobutton(
+            frame_radio, text="Đăng ký",
+            value="register", variable=self.action_var
+        ).pack(side="left", padx=(10, 0))
 
         # buttons
         btn_frame = tk.Frame(self.top, bg="#f0f0f0")
