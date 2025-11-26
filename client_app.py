@@ -37,6 +37,10 @@ class ChatClient:
         self.image_callback = None
         self.chat_event_callback = None
         self.history_callback = None
+        self.receive_thread = None
+
+        # lưu lỗi lần connect gần nhất
+        self.last_error = ""
 
     # ---------- tiện ích ----------
     def send_packet(self, data: dict) -> bool:
@@ -52,6 +56,7 @@ class ChatClient:
 
     # ---------- kết nối / đăng nhập ----------
     def connect(self, username: str, password: str, action: str, log_cb) -> bool:
+        self.last_error = ""  # reset lỗi cũ
         try:
             self.username = username
             self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -71,6 +76,7 @@ class ChatClient:
             while True:
                 chunk = self.client_socket.recv(4096).decode("utf-8")
                 if not chunk:
+                    self.last_error = "Mất kết nối khi chờ phản hồi đăng nhập."
                     log_cb("[LỖI] Mất kết nối khi chờ phản hồi đăng nhập.\n", "error")
                     return False
                 buffer += chunk
@@ -82,14 +88,18 @@ class ChatClient:
             try:
                 data = json.loads(line)
             except:
+                self.last_error = "Phản hồi đăng nhập không hợp lệ."
                 log_cb("[LỖI] Phản hồi đăng nhập không hợp lệ.\n", "error")
                 return False
 
             if data.get("type") == "error":
-                log_cb(f"[LỖI] {data.get('message')}\n", "error")
+                msg = data.get("message", "Đăng nhập / đăng ký thất bại.")
+                self.last_error = msg
+                log_cb(f"[LỖI] {msg}\n", "error")
                 return False
 
             if data.get("type") != "auth_ok":
+                self.last_error = "Phản hồi đăng nhập không hợp lệ."
                 log_cb("[LỖI] Phản hồi đăng nhập không hợp lệ.\n", "error")
                 return False
 
@@ -105,6 +115,7 @@ class ChatClient:
             return True
 
         except Exception as e:
+            self.last_error = f"Không thể kết nối server: {e}"
             log_cb(f"[LỖI] Không thể kết nối server: {e}\n", "error")
             return False
 
@@ -429,10 +440,11 @@ class ClientGUI:
 
         ok = self.client.connect(user, pw, action, self.display_message)
         if not ok:
-            messagebox.showerror("Lỗi đăng nhập", "Sai thông tin hoặc không thỏa điều kiện.\nVui lòng đăng ký lại.")
+            msg = self.client.last_error or "Sai thông tin hoặc không thỏa điều kiện.\nVui lòng đăng ký lại."
+            messagebox.showerror("Lỗi đăng nhập / đăng ký", msg)
             self.do_login()   # mở lại form đăng nhập
             return
-        self.username_label.config(text=user)
+
 
     # ---------- CALLBACK ----------
     def display_message(self, text, tag="other"):
