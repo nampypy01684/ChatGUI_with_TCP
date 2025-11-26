@@ -228,11 +228,29 @@ class ChatServer:
         pw_hash = hash_pw(password)
 
         if action == "register":
-            if username in self.users:
-                self.send(sock, {"type": "error", "message": "Tên đã tồn tại."})
+
+            # ----- RÀNG BUỘC USERNAME -----
+            if len(username) < 3:
+                self.send(sock, {"type": "error", "message": "Tên đăng nhập phải có ít nhất 3 ký tự."})
                 return None
+
+            if not username.isalnum():
+                self.send(sock, {"type": "error", "message": "Tên đăng nhập chỉ được chứa chữ và số."})
+                return None
+
+            # ----- RÀNG BUỘC PASSWORD -----
+            if len(password) < 6:
+                self.send(sock, {"type": "error", "message": "Mật khẩu phải có ít nhất 6 ký tự."})
+                return None
+
+            if username in self.users:
+                self.send(sock, {"type": "error", "message": "Tên tài khoản đã tồn tại."})
+                return None
+
+            # OK → tạo tài khoản
             self.users[username] = {"password": pw_hash, "avatar": None}
             save_users(self.users)
+
 
         elif action == "login":
             if username not in self.users:
@@ -315,7 +333,7 @@ class ChatServer:
             self.send_room_list()
             try:
                 if self.logger:
-                    self.logger(f"{user} created room '{name}' private={pw!=""}")
+                    self.logger(f"{user} created room '{name}' private={pw != ''}")
             except:
                 pass
 
