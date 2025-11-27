@@ -9,74 +9,85 @@ class LoginDialog:
 
         self.top = tk.Toplevel(master)
         self.top.title("Đăng nhập chat")
-        self.top.geometry("320x220")
+        self.top.geometry("360x260")
         self.top.resizable(False, False)
         self.top.grab_set()
         self.top.configure(bg="#f0f0f0")
 
-        # username
-        tk.Label(self.top, text="Tài khoản:", bg="#f0f0f0").pack(anchor="w", padx=16, pady=(16, 2))
-        self.username_entry = ttk.Entry(self.top)
-        self.username_entry.pack(fill="x", padx=16)
+        # ----- FRAME CHÍNH -----
+        main = ttk.Frame(self.top, padding=12)
+        main.pack(fill="both", expand=True)
 
-        # password
-        tk.Label(self.top, text="Mật khẩu:", bg="#f0f0f0").pack(anchor="w", padx=16, pady=(10, 2))
-        self.password_entry = ttk.Entry(self.top, show="*")
-        self.password_entry.pack(fill="x", padx=16)
+        # Username
+        ttk.Label(main, text="Tên đăng nhập:").grid(row=0, column=0, sticky="w")
+        self.username_entry = ttk.Entry(main, width=25)
+        self.username_entry.grid(row=0, column=1, sticky="ew", pady=2)
 
-    # radio login / register
+        # Password
+        ttk.Label(main, text="Mật khẩu:").grid(row=1, column=0, sticky="w")
+        self.password_entry = ttk.Entry(main, show="*", width=25)
+        self.password_entry.grid(row=1, column=1, sticky="ew", pady=2)
+
+        # Server host
+        ttk.Label(main, text="Server (IP/host):").grid(row=2, column=0, sticky="w")
+        self.host_entry = ttk.Entry(main, width=25)
+        self.host_entry.insert(0, "127.0.0.1")  # mặc định localhost
+        self.host_entry.grid(row=2, column=1, sticky="ew", pady=2)
+
+        # Port
+        ttk.Label(main, text="Port:").grid(row=3, column=0, sticky="w")
+        self.port_entry = ttk.Entry(main, width=25)
+        self.port_entry.insert(0, "5555")
+        self.port_entry.grid(row=3, column=1, sticky="ew", pady=2)
+
+        # Action: login / register
+        action_frame = ttk.Frame(main)
+        action_frame.grid(row=4, column=0, columnspan=2, pady=6, sticky="w")
+
         self.action_var = tk.StringVar(value="login")
+        ttk.Radiobutton(action_frame, text="Đăng nhập",
+                        variable=self.action_var, value="login").pack(side="left", padx=4)
+        ttk.Radiobutton(action_frame, text="Đăng ký",
+                        variable=self.action_var, value="register").pack(side="left", padx=4)
 
-        # ====== HÀM HIỆN BẢNG ĐIỀU KIỆN ======
-        def show_requirements():
-            from tkinter import messagebox as mb
-            mb.showinfo(
-                "Điều kiện đăng ký",
-                "- Username ≥ 3 ký tự\n"
-                "- Username chỉ gồm chữ và số (A-Z, 0-9)\n"
-                "- Mật khẩu ≥ 6 ký tự\n"
-                "- Không được bỏ trống tài khoản hoặc mật khẩu"
-            )
+        # Buttons
+        btn_frame = ttk.Frame(main)
+        btn_frame.grid(row=5, column=0, columnspan=2, pady=8)
 
-        # ====== CALLBACK KHI CHUYỂN LOGIN <-> REGISTER ======
-        def on_action_change(*args):
-            if self.action_var.get() == "register":
-                show_requirements()
+        ok_btn = ttk.Button(btn_frame, text="OK", command=self.on_ok)
+        ok_btn.pack(side="left", padx=5)
+        cancel_btn = ttk.Button(btn_frame, text="Hủy", command=self.on_cancel)
+        cancel_btn.pack(side="left", padx=5)
 
-        self.action_var.trace("w", on_action_change)
+        # một chút layout
+        main.columnconfigure(1, weight=1)
 
-        # ====== FRAME RADIO ======
-        frame_radio = tk.Frame(self.top, bg="#f0f0f0")
-        frame_radio.pack(anchor="w", padx=16, pady=(10, 4))
-
-        ttk.Radiobutton(
-            frame_radio, text="Đăng nhập",
-            value="login", variable=self.action_var
-        ).pack(side="left")
-
-        ttk.Radiobutton(
-            frame_radio, text="Đăng ký",
-            value="register", variable=self.action_var
-        ).pack(side="left", padx=(10, 0))
-
-        # buttons
-        btn_frame = tk.Frame(self.top, bg="#f0f0f0")
-        btn_frame.pack(fill="x", padx=16, pady=(16, 10))
-        ttk.Button(btn_frame, text="OK", command=self.on_ok).pack(side="right")
-        ttk.Button(btn_frame, text="Hủy", command=self.on_cancel).pack(side="right", padx=(0, 8))
-
+        # focus vào username
         self.username_entry.focus_set()
+
+        # bind Enter
         self.top.bind("<Return>", lambda e: self.on_ok())
 
     def on_ok(self):
         u = self.username_entry.get().strip()
         p = self.password_entry.get().strip()
+        h = self.host_entry.get().strip() or "127.0.0.1"
+        port_str = self.port_entry.get().strip() or "5555"
+
+        try:
+            port = int(port_str)
+        except ValueError:
+            port = 5555
+
         if not u or not p:
-            return
+            return  # có thể thêm messagebox nếu muốn
+
         self.result = {
             "username": u,
             "password": p,
-            "action": self.action_var.get()
+            "action": self.action_var.get(),
+            "host": h,
+            "port": port,
         }
         self.top.destroy()
 
