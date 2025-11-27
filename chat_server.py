@@ -422,6 +422,146 @@ class ChatServer:
 
             self.add_history(user, f"[ảnh] {filename}", room)
 
+        # QTV - KICK USER
+        elif msg_type == "admin_kick":
+            room = data.get("room")
+            target = data.get("target")
+            
+            if room not in self.rooms:
+                self.send(sock, {"type": "error", "message": "Phòng không tồn tại."})
+                return
+            
+            # Kiểm tra xem user hiện tại có phải là admin của phòng không
+            if self.rooms[room]["creator"] != user:
+                self.send(sock, {"type": "error", "message": "Bạn không phải quản trị viên của phòng này."})
+                return
+            
+            # Tìm socket của target user
+            target_sock = None
+            for s, inf in self.clients.items():
+                if inf["username"] == target and inf["room"] == room:
+                    target_sock = s
+                    break
+            
+            if not target_sock:
+                self.send(sock, {"type": "error", "message": f"Không tìm thấy '{target}' trong phòng."})
+                return
+            
+            # Xóa target từ phòng
+            self.rooms[room]["members"].discard(target_sock)
+            self.clients[target_sock]["room"] = "Phòng chung"
+            
+            # Chuyển target về Phòng chung
+            self.rooms["Phòng chung"]["members"].add(target_sock)
+            self.send(target_sock, {
+                "type": "chat",
+                "sender": "SERVER",
+                "room": room,
+                "message": f"Bạn đã bị xóa khỏi phòng '{room}' bởi quản trị viên!",
+                "timestamp": datetime.now().strftime("%H:%M:%S")
+            })
+            
+            # Thông báo tới mọi người trong phòng
+            msg = f"{user} đã xóa {target} khỏi phòng!"
+            self.broadcast_room(room, "SERVER", msg)
+            self.add_history("SERVER", msg, room)
+            
+            # Gửi thông tin phòng mới cho target
+            self.send(target_sock, {
+                "type": "room_joined",
+                "room": "Phòng chung",
+                "creator": "SERVER",
+                "is_admin": False
+            })
+            
+            self.broadcast_user_list()
+            self.send_room_list()
+            
+            try:
+                if self.logger:
+                    self.logger(f"{user} kicked {target} from room '{room}'")
+            except:
+                pass
+
+        # QTV - CHANGE PASSWORD
+        elif msg_type == "admin_change_password":
+            room = data.get("room")
+            new_password = data.get("new_password", "")
+            
+            if room not in self.rooms:
+                self.send(sock, {"type": "error", "message": "Phòng không tồn tại."})
+                return
+            
+            # Kiểm tra xem user hiện tại có phải là admin của phòng không
+            if self.rooms[room]["creator"] != user:
+                self.send(sock, {"type": "error", "message": "Bạn không phải quản trị viên của phòng này."})
+                return
+            
+            # Thay đổi mật khẩu
+            self.rooms[room]["password"] = new_password
+            self.rooms[room]["is_private"] = new_password != ""
+            
+            # Thông báo tới mọi người trong phòng
+            if new_password:
+                msg = f"{user} đã đặt mật khẩu mới cho phòng."
+            else:
+                msg = f"{user} đã xóa mật khẩu của phòng (phòng công khai)."
+            
+            self.broadcast_room(room, "SERVER", msg)
+            self.add_history("SERVER", msg, room)
+            self.send_room_list()
+            
+            try:
+                if self.logger:
+                    self.logger(f"{user} changed password for room '{room}'")
+            except:
+                pass
+
+        # QTV - RENAME ROOM
+        elif msg_type == "admin_rename_room":
+            room = data.get("room")
+            new_name = data.get("new_name")
+            
+            if room not in self.rooms:
+                self.send(sock, {"type": "error", "message": "Phòng không tồn tại."})
+                return
+            
+            # Kiểm tra xem user hiện tại có phải là admin của phòng không
+            if self.rooms[room]["creator"] != user:
+                self.send(sock, {"type": "error", "message": "Bạn không phải quản trị viên của phòng này."})
+                return
+            
+            if not new_name or new_name == room:
+                self.send(sock, {"type": "error", "message": "Tên phòng mới không hợp lệ."})
+                return
+            
+            if new_name in self.rooms:
+                self.send(sock, {"type": "error", "message": "Tên phòng mới đã tồn tại."})
+                return
+            
+            # Thay đổi tên phòng
+            self.rooms[new_name] = self.rooms.pop(room)
+            
+            # Cập nhật room name cho tất cả members
+            for s in list(self.rooms[new_name]["members"]):
+                if s in self.clients:
+                    self.clients[s]["room"] = new_name
+                    self.send(s, {
+                        "type": "chat",
+                        "sender": "SERVER",
+                        "room": new_name,
+                        "message": f"Phòng đã được đổi tên từ '{room}' thành '{new_name}'",
+                        "timestamp": datetime.now().strftime("%H:%M:%S")
+                    })
+            
+            self.send_room_list()
+            
+            try:
+                if self.logger:
+                    self.logger(f"{user} renamed room '{room}' to '{new_name}'")
+            except:
+                pass
+
     # ------------------ HANDLE CLIENT ------------------
     def handle_client(self, sock, addr):
         username = self.handle_auth(sock)
