@@ -418,6 +418,7 @@ class ClientGUI:
         tk.Button(input_frame, text="📎", command=self.send_image).grid(row=0, column=2, padx=10)
 
     # ---------- LOGIN ----------
+        # ---------- LOGIN ----------
     def do_login(self):
         dialog = LoginDialog(self.root)
         res = dialog.show()
@@ -450,6 +451,12 @@ class ClientGUI:
             messagebox.showerror("Lỗi đăng nhập / đăng ký", msg)
             self.do_login()
             return
+
+        # ---- ĐĂNG NHẬP THÀNH CÔNG ----
+        # cập nhật tên hiển thị ở header
+        self.username_label.config(text=user)
+        # cập nhật title cửa sổ cho dễ nhìn
+        self.root.title(f"Cute Chat - {user}")
 
     # ---------- CALLBACK ----------
     def display_message(self, text, tag="other"):
