@@ -428,6 +428,12 @@ class ClientGUI:
         user = res["username"]
         pw = res["password"]
         action = res["action"]
+        host = res.get("host", "127.0.0.1")
+        port = res.get("port", 5555)
+
+        # gán host/port cho client trước khi connect
+        self.client.host = host
+        self.client.port = port
 
         # đăng ký callback TRƯỚC connect
         self.client.message_callback = self.display_message
@@ -442,9 +448,8 @@ class ClientGUI:
         if not ok:
             msg = self.client.last_error or "Sai thông tin hoặc không thỏa điều kiện.\nVui lòng đăng ký lại."
             messagebox.showerror("Lỗi đăng nhập / đăng ký", msg)
-            self.do_login()   # mở lại form đăng nhập
+            self.do_login()
             return
-
 
     # ---------- CALLBACK ----------
     def display_message(self, text, tag="other"):
