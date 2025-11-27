@@ -54,7 +54,7 @@ def save_history(hist):
 
 # ===================== SERVER =====================
 class ChatServer:
-    def __init__(self, host="127.0.0.1", port=5555):
+    def __init__(self, host="0.0.0.0", port=5555):
         self.host = host
         self.port = port
 
