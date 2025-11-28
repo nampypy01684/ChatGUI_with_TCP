@@ -10,7 +10,6 @@ from tkinter import messagebox, simpledialog, scrolledtext
 USERS_FILE = "users.json"
 HISTORY_FILE = "chat_history.json"
 
-
 # ===================== UTILS =====================
 def load_users():
     if not os.path.exists(USERS_FILE):
